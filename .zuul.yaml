@@ -1,7 +1,11 @@
 - project:
     check:
       jobs:
-        - noop
+        - openstack-tox-pep8:
+            required-projects:
+              - openstack/horizon
     gate:
       jobs:
-        - noop
+        - openstack-tox-pep8:
+            required-projects:
+              - openstack/horizon

@@ -1,0 +1,10 @@
+coverage>=4.4.1 # Apache-2.0
+ddt>=1.2.1 # MIT
+django
+fixtures>=3.0.0 # Apache-2.0/BSD
+hacking==6.1.0 # Apache-2.0
+oslotest>=3.8.0 # Apache-2.0
+stestr>=2.0.0 # Apache-2.0
+testresources>=2.0.0 # Apache-2.0/BSD
+testscenarios>=0.4 # Apache-2.0/BSD
+testtools>=2.5.0 # MIT

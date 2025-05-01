@@ -1,0 +1,35 @@
+[build-system]
+requires = ["pbr>=6.0.0", "setuptools>=64.0.0"]
+build-backend = "pbr.build"
+
+[project]
+name = "grian-ui"
+description = "A horizon dashboard plugin for telemetry visualization"
+readme = "README.rst"
+authors = [
+  {name = "OpenStack", email = "openstack-discuss@lists.openstack.org"},
+]
+requires-python = ">=3.10"
+license = "Apache-2.0"
+classifiers = [
+    "Environment :: OpenStack",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dynamic = ["version"]
+keywords = ["openstack", "horizon", "telemetry"]
+
+[project.urls]
+Homepage = "https://opendev.org/openstack/grian-ui"
+Documentation = "https://docs.openstack.org/grian-ui/latest/"
+Repository = "https://opendev.org/openstack/grian-ui"
+Issues = "https://bugs.launchpad.net/grian-ui"
+Changelog = "https://docs.openstack.org/releasenotes/grian-ui/"
