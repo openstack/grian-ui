@@ -1,4 +1,9 @@
 - project:
+    # Please try to keep the list of job names sorted alphabetically.
+    templates:
+      - check-requirements
+      - publish-openstack-docs-pti
+      - release-notes-jobs-python3
     check:
       jobs:
         - openstack-tox-pep8:
