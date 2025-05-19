@@ -26,7 +26,6 @@ repos:
   # python
   - id: debug-statements
   - id: check-docstring-first
-  - id: name-tests-test
   - id: requirements-txt-fixer
 
 

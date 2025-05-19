@@ -33,3 +33,8 @@ Documentation = "https://docs.openstack.org/grian-ui/latest/"
 Repository = "https://opendev.org/openstack/grian-ui"
 Issues = "https://bugs.launchpad.net/grian-ui"
 Changelog = "https://docs.openstack.org/releasenotes/grian-ui/"
+
+
+[tool.stestr]
+test_path = "./tests/grian_ui_tests/unit"
+top_dir = "./"

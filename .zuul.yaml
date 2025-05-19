@@ -4,13 +4,10 @@
       - check-requirements
       - publish-openstack-docs-pti
       - release-notes-jobs-python3
+      - openstack-python3-jobs
     check:
       jobs:
-        - openstack-tox-pep8:
-            required-projects:
-              - openstack/horizon
+        - openstack-tox-pep8
     gate:
       jobs:
-        - openstack-tox-pep8:
-            required-projects:
-              - openstack/horizon
+        - openstack-tox-pep8

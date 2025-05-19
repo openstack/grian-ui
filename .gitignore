@@ -30,6 +30,7 @@ nosetests.xml
 .testrepository
 .venv
 node_modules
+.stestr
 
 # Translations
 *.mo
