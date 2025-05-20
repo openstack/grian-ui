@@ -8,6 +8,8 @@
     check:
       jobs:
         - openstack-tox-pep8
+        - openstack-tox-functional
     gate:
       jobs:
         - openstack-tox-pep8
+        - openstack-tox-functional
