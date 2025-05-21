@@ -1,0 +1,68 @@
+[[local|localrc]]
+
+# set default password
+ADMIN_PASSWORD=password
+DATABASE_PASSWORD=${ADMIN_PASSWORD}
+RABBIT_PASSWORD=${ADMIN_PASSWORD}
+SERVICE_PASSWORD=${ADMIN_PASSWORD}
+SERVICE_TOKEN=${ADMIN_PASSWORD}
+
+HOST_IP_IFACE=enp1s0  # alternitivly set HOST_IP[v6] below
+#HOST_IP=192.168.122.51
+#HOST_IPV6=2001:db8::7
+#FLAT_INTERFACE=eth0
+
+MULTI_HOST=1
+
+CEILOMETER_ALARM_THRESHOLD="6000000000"
+CEILOMETER_BACKENDS="sg-core"
+CEILOMETER_PIPELINE_INTERVAL="15"
+
+# Enable the Ceilometer plugin
+enable_plugin ceilometer https://opendev.org/openstack/ceilometer
+enable_plugin devstack-plugin-prometheus https://opendev.org/openstack/devstack-plugin-prometheus
+enable_plugin sg-core https://github.com/openstack-k8s-operators/sg-core main
+
+
+# Enable the ceilometer api explicitly(bug:1667678)
+enable_service ceilometer-api
+enable_service prometheus
+enable_service node-exporter
+# disable cinder
+disable_service c-api
+disable_service c-bak
+disable_service c-sch
+disable_service c-vol
+# disable swift
+disable_service s-account
+disable_service s-container
+disable_service s-object
+disable_service s-proxy
+# disable etcd
+disable_service etcd
+# enable osc in server mode
+enable_service openstack-cli-server
+
+LOGFILE=$DEST/logs/stack.sh.log
+LOGDAYS=2
+
+[[post-config|$NOVA_CONF]]
+[DEFAULT]
+compute_monitors=cpu.virt_driver
+[notifications]
+# Enable both versioned and unversioned notifications. Watcher only
+# uses versioned notifications but ceilometer uses unversioned. We
+# can change this to just versioned when ceilometer handles versioned
+# notifications from nova: https://bugs.launchpad.net/ceilometer/+bug/1665449
+notification_format=both
+
+[[test-config|$TEMPEST_CONFIG]]
+[service_available]
+sg_core = True
+
+[telemetry]
+ceilometer_polling_interval = 15
+disable_ssl_certificate_validation = True
+
+[telemetry_services]
+metric_backends = prometheus

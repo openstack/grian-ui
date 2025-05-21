@@ -70,8 +70,3 @@ repos:
       additional_dependencies:
         - flake8-import-order~=0.18.2
       exclude: '^(doc|releasenotes|tools)/.*$'
-
-- repo: "https://github.com/TotallyNotRobots/check-spdx-header"
-  rev: '0.1.0'
-  hooks:
-    - id: fix-spdx-header

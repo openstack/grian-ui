@@ -59,7 +59,7 @@ ChangeLog
 
 # Horizon related
 *.lock
-grian_horizon_plugin/test/.secret_key_store
+src/grian_ui/.secret_key_store
 
 # Files created by releasenotes build
 releasenotes/build
