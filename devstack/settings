@@ -1,0 +1,5 @@
+# settings file for grian-ui plugin
+enable_service grian-ui
+
+# set up default directories
+GRIAN_UI_DIR=${GRIAN_UI_DIR:=$DEST/grian-ui}
