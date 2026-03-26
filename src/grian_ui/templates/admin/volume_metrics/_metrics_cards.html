@@ -1,0 +1,78 @@
+{% load i18n %}
+<style>
+.metric-card {
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+}
+.metric-card .panel-heading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 20px 15px;
+}
+.metric-icon {
+  font-size: 3.5em;
+  opacity: 0.3;
+  margin-right: 15px;
+}
+.metric-value {
+  font-size: 2.5em;
+  font-weight: 300;
+  line-height: 1;
+  margin-bottom: 5px;
+}
+.metric-label {
+  font-size: 0.9em;
+  opacity: 0.9;
+  font-weight: 400;
+}
+</style>
+
+<div class="col-lg-3 col-md-6 col-sm-6">
+  <div class="panel panel-primary metric-card">
+    <div class="panel-heading">
+      <i class="fa fa-hdd-o metric-icon"></i>
+      <div class="text-right" style="flex: 1;">
+        <div class="metric-value">{{ overview.total_storage|default:"N/A" }}</div>
+        <div class="metric-label">{% trans "Total Storage (GiB)" %}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="col-lg-3 col-md-6 col-sm-6">
+  <div class="panel panel-green metric-card">
+    <div class="panel-heading">
+      <i class="fa fa-check-circle metric-icon"></i>
+      <div class="text-right" style="flex: 1;">
+        <div class="metric-value">{{ overview.allocated_storage|default:"N/A" }}</div>
+        <div class="metric-label">{% trans "Allocated Storage (GiB)" %}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="col-lg-3 col-md-6 col-sm-6">
+  <div class="panel panel-yellow metric-card">
+    <div class="panel-heading">
+      <i class="fa fa-database metric-icon"></i>
+      <div class="text-right" style="flex: 1;">
+        <div class="metric-value">{{ volumes }}</div>
+        <div class="metric-label">{% trans "Total Volumes" %}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="col-lg-3 col-md-6 col-sm-6">
+  <div class="panel panel-red metric-card">
+    <div class="panel-heading">
+      <i class="fa fa-camera metric-icon"></i>
+      <div class="text-right" style="flex: 1;">
+        <div class="metric-value">{{ snapshots }}</div>
+        <div class="metric-label">{% trans "Total Snapshots" %}</div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,11 @@
+include AUTHORS
+include ChangeLog
+exclude .gitignore
+exclude .gitreview
+
+global-exclude *.pyc
+
+recursive-include src/grian_ui *.py
+recursive-include src/grian_ui/templates *.html
+recursive-include src/grian_ui/static *.css *.js *.png *.jpg *.gif *.ico
+recursive-include src/grian_ui/enabled *.py

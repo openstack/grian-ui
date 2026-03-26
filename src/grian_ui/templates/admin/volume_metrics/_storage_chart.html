@@ -1,0 +1,107 @@
+{% load i18n %}
+<div class="panel panel-default">
+  <div class="panel-heading">
+    <h3 class="panel-title">
+      <i class="fa fa-bar-chart"></i> {% trans "Volume and Snapshot Distribution" %}
+    </h3>
+  </div>
+  <div class="panel-body" style="padding: 15px;">
+    {% if volumes or snapshots %}
+    <canvas id="storageMetricsChart" style="max-height: 300px;"></canvas>
+    {% else %}
+    <p class="text-muted text-center" style="padding: 20px;">
+      <i class="fa fa-info-circle"></i> {% trans "No volume or snapshot data available." %}
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+{% if volumes or snapshots %}
+<script>
+(function() {
+  var ctx = document.getElementById('storageMetricsChart');
+  if (!ctx) return;
+
+  if (window.storageChart) {
+    window.storageChart.destroy();
+  }
+
+  window.storageChart = new Chart(ctx.getContext('2d'), {
+    type: 'doughnut',
+    data: {
+      labels: ['{% trans "Volumes" %}', '{% trans "Snapshots" %}'],
+      datasets: [{
+        label: '{% trans "Count" %}',
+        data: [{{ volumes|default:0 }}, {{ snapshots|default:0 }}],
+        backgroundColor: [
+          'rgba(91, 192, 222, 0.8)',
+          'rgba(240, 173, 78, 0.8)'
+        ],
+        borderColor: [
+          'rgba(91, 192, 222, 1)',
+          'rgba(240, 173, 78, 1)'
+        ],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: {
+            padding: 15,
+            font: {
+              size: 13
+            },
+            generateLabels: function(chart) {
+              const data = chart.data;
+              if (data.labels.length && data.datasets.length) {
+                return data.labels.map(function(label, i) {
+                  const value = data.datasets[0].data[i];
+                  return {
+                    text: label + ': ' + value,
+                    fillStyle: data.datasets[0].backgroundColor[i],
+                    strokeStyle: data.datasets[0].borderColor[i],
+                    lineWidth: 2,
+                    hidden: false,
+                    index: i
+                  };
+                });
+              }
+              return [];
+            }
+          }
+        },
+        title: {
+          display: true,
+          text: '{% trans "Volume and Snapshot Distribution" %}',
+          font: {
+            size: 14,
+            weight: 'normal'
+          },
+          padding: {
+            top: 5,
+            bottom: 15
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              let label = context.label || '';
+              if (label) {
+                label += ': ';
+              }
+              label += context.parsed;
+              return label;
+            }
+          }
+        }
+      }
+    }
+  });
+})();
+</script>
+{% endif %}

@@ -1,0 +1,70 @@
+{% load i18n %}
+<div class="panel panel-default">
+  <div class="panel-heading">
+    <h3 class="panel-title">
+      <i class="fa fa-line-chart"></i> {% trans "Capacity Forecast" %}
+      <small class="text-muted">{% trans "(30-day prediction based on 7-day trend)" %}</small>
+    </h3>
+  </div>
+  <div class="panel-body">
+    {% if predictions %}
+      <div class="table-responsive">
+        <table class="table table-hover">
+          <thead>
+            <tr>
+              <th>{% trans "Pool Name" %}</th>
+              <th class="text-right">{% trans "Current Free (GiB)" %}</th>
+              <th class="text-right">{% trans "Predicted in 30 Days (GiB)" %}</th>
+              <th class="text-center">{% trans "Status" %}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for pred in predictions %}
+            <tr class="{% if pred.will_run_out %}danger{% endif %}">
+              <td><strong>{{ pred.name }}</strong></td>
+              <td class="text-right">{{ pred.current_free|floatformat:2 }}</td>
+              <td class="text-right">
+                {% if pred.predicted_value is not None %}
+                  {{ pred.predicted_value|floatformat:2 }}
+                {% else %}
+                  <span class="text-muted">{% trans "N/A" %}</span>
+                {% endif %}
+              </td>
+              <td class="text-center">
+                {% if pred.will_run_out %}
+                  <span class="label label-danger">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    {% trans "Full in" %} {{ pred.days_until_full }} {% trans "days" %}
+                  </span>
+                {% elif pred.predicted_value is not None and pred.predicted_value < pred.current_free %}
+                  <span class="label label-warning">
+                    <i class="fa fa-arrow-down"></i> {% trans "Declining" %}
+                  </span>
+                {% elif pred.predicted_value is not None %}
+                  <span class="label label-success">
+                    <i class="fa fa-check"></i> {% trans "Healthy" %}
+                  </span>
+                {% else %}
+                  <span class="label label-default">
+                    <i class="fa fa-question"></i> {% trans "Insufficient data" %}
+                  </span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert alert-info" style="margin-top: 15px; margin-bottom: 0;">
+        <i class="fa fa-info-circle"></i>
+        <strong>{% trans "Note:" %}</strong>
+        {% trans "Predictions are based on linear regression of the last 7 days of capacity data. Actual usage may vary." %}
+      </div>
+    {% else %}
+      <p class="text-muted text-center" style="padding: 20px;">
+        <i class="fa fa-info-circle"></i> {% trans "No prediction data available." %}
+      </p>
+    {% endif %}
+  </div>
+</div>

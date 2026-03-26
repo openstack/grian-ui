@@ -4,3 +4,7 @@
 # our unit tests should not need to depend on horizon.
 
 DEBUG = True
+
+GRIAN_PLUGIN = {
+    "datasource": "fake",
+}

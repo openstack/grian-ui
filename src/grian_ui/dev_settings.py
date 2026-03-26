@@ -97,6 +97,11 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Add grian_ui to INSTALLED_APPS if not already present
+INSTALLED_APPS = list(INSTALLED_APPS)  # noqa
+if "grian_ui" not in INSTALLED_APPS:
+    INSTALLED_APPS.append("grian_ui")
+
 GRIAN_PLUGIN = {"datasource": os.getenv("GRIAN_DATA_SOURCE", "fake")}
 
 # COMPRESS_OFFLINE = True

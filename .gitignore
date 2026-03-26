@@ -67,3 +67,6 @@ releasenotes/build
 # DS_Store on Mac computers
 *.DS_Store
 CLAUDE.md
+
+# Vendored JS (downloaded via get_vendor.sh)
+src/grian_ui/static/vendor/*.js

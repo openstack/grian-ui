@@ -9,21 +9,22 @@ readme = "README.rst"
 authors = [
   {name = "OpenStack", email = "openstack-discuss@lists.openstack.org"},
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 classifiers = [
     "Environment :: OpenStack",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",
+    "Development Status :: 2 - Pre-Alpha",
     "Programming Language :: Python",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dynamic = ["version"]
 keywords = ["openstack", "horizon", "telemetry"]
@@ -64,6 +65,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/grian_ui_tests/*" = ["S"]
+"src/grian_ui/datasource/fake.py" = ["S311"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["grian_ui"]
