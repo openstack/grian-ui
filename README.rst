@@ -9,9 +9,8 @@ grian-ui - telemetry visualization dashboard
 * Bugs: https://bugs.launchpad.net/grian-ui
 
 
-.. TODO::
-
-   move to contributor docs.
+..
+   TODO: move to contributor docs.
 
 Making Changes & Contributing
 =============================
@@ -158,9 +157,9 @@ This local.conf expect the following file at /opt/stack/prometheus.yml ::
       static_configs:
         - targets: ["localhost:3000"]
 
-.. TODO::
-   enable Grian-UI when we add any content.
-   and move the devstack exampel to the devstack plugin
+..
+   TODO: enable Grian-UI when we add any content.
+   and move the devstack example to the devstack plugin
 
 if you are running devstack on a remote vm you can forward the development server endpoint locally using the following command ::
 
