@@ -35,7 +35,49 @@ Repository = "https://opendev.org/openstack/grian-ui"
 Issues = "https://bugs.launchpad.net/grian-ui"
 Changelog = "https://docs.openstack.org/releasenotes/grian-ui/"
 
-
 [tool.stestr]
 test_path = "./tests/grian_ui_tests/unit"
 top_dir = "./"
+
+[tool.ruff]
+line-length = 79
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "G", "I", "LOG", "S", "UP", "W", "C90"]
+external = ["H"]
+ignore = [
+    # asserts used for type narrowing only
+    "S101",
+    # S104 Possible binding to all interfaces
+    "S104",
+    # S105/S106 Possible hardcoded password
+    "S105",
+    "S106",
+    # S110 try-except-pass — logged elsewhere
+    "S110",
+    # UP031 % format — defer f-string migration to a later pass
+    "UP031",
+    # UP032 f-string — defer migration to a later pass
+    "UP032",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/grian_ui_tests/*" = ["S"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["grian_ui"]
+force-single-line = true
+lines-after-imports = 2
+lines-between-types = 1
+section-order = ["future", "standard-library", "third-party",  "first-party"]
+# this is the default but just being explicit about the behavior
+# in case that ever changes.
+force-sort-within-sections = false
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
+[tool.ruff.format]
+quote-style = "preserve"
+docstring-code-format = true
