@@ -6,3 +6,4 @@ Grian-UI Release Notes
    :maxdepth: 1
 
    unreleased
+   2026.2
