@@ -1,0 +1,9 @@
+---
+fixes:
+  - |
+    The DevStack plugin now downloads the vendored JavaScript libraries
+    (Chart.js and htmx) used by the dashboards. Previously they were never
+    fetched in DevStack deployments, so the charts and the HTMX-refreshed
+    sections of the Volume Metrics panel were empty. The
+    ``static/vendor/get_vendor.sh`` script can now be run from any
+    directory and no longer removes existing files when a download fails.

@@ -2,6 +2,17 @@
 
 function install_grian_ui {
     setup_develop ${GRIAN_UI_DIR}
+    install_grian_ui_vendor_js
+}
+
+# The JavaScript libraries used by the templates (Chart.js, htmx) are not
+# tracked in git. Fetch them so that Horizon's collectstatic, run later by
+# init_horizon, picks them up. Without them the charts and the HTMX
+# refreshed sections of the dashboards stay empty.
+function install_grian_ui_vendor_js {
+    local vendor_dir=${GRIAN_UI_DIR}/src/grian_ui/static/vendor
+    bash ${vendor_dir}/get_vendor.sh || \
+        die $LINENO "Failed to download grian-ui vendored JavaScript libraries"
 }
 
 # check for services enabled
