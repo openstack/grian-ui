@@ -1,0 +1,4 @@
+{% load i18n %}{% if detail and detail.cpu is not None %}<div class="chh-cpu-bar" title="{% blocktrans with u=detail.user k=detail.kernel i=detail.iowait %}user {{ u }}% · kernel {{ k }}% · I/O wait {{ i }}%{% endblocktrans %}">
+  <div class="chh-seg chh-seg-user" style="width: {{ detail.user|default:0|floatformat:'1u' }}%;"></div><div class="chh-seg chh-seg-kernel" style="width: {{ detail.kernel|default:0|floatformat:'1u' }}%;"></div><div class="chh-seg chh-seg-iowait" style="width: {{ detail.iowait|default:0|floatformat:'1u' }}%;"></div>
+  <div class="chh-txt">{{ detail.cpu|floatformat:"-1" }}%</div>
+</div>{% else %}<span class="text-muted">{% trans "no recent data" %}</span>{% endif %}

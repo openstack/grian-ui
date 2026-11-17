@@ -1,0 +1,89 @@
+{% load i18n %}
+<div class="panel panel-default">
+  <div class="panel-heading">
+    <h3 class="panel-title" style="display: inline-block;"><i class="fa fa-sort-amount-desc"></i> {% trans "Top hosts" %}
+      <small class="text-muted">{% blocktrans with n=top_limit %}(max {{ n }}){% endblocktrans %}</small></h3>
+    <div class="btn-group btn-group-xs pull-right" role="group" aria-label="{% trans 'Sort hosts by' %}">
+      <button type="button" class="btn btn-default{% if by == 'cpu' %} active{% endif %}" aria-pressed="{% if by == 'cpu' %}true{% else %}false{% endif %}" onclick="chh.setTop('cpu')">{% trans "Busiest CPU" %}</button>
+      <button type="button" class="btn btn-default{% if by == 'iowait' %} active{% endif %}" aria-pressed="{% if by == 'iowait' %}true{% else %}false{% endif %}" onclick="chh.setTop('iowait')">{% trans "Highest I/O wait" %}</button>
+      <button type="button" class="btn btn-default{% if by == 'stale' %} active{% endif %}" aria-pressed="{% if by == 'stale' %}true{% else %}false{% endif %}" onclick="chh.setTop('stale')">{% trans "Stale" %}</button>
+      {% if by == 'band' and band_label %}
+      <button type="button" class="btn btn-default active" aria-pressed="true" title="{% trans 'Selected from the Hosts by CPU usage chart' %}">{% blocktrans with label=band_label %}CPU {{ label }}{% endblocktrans %}</button>
+      {% endif %}
+    </div>
+    <div class="clearfix"></div>
+  </div>
+
+  {% if error_message %}
+  <div class="panel-body"><div class="alert alert-danger" style="margin: 0;"><i class="fa fa-exclamation-circle"></i> {{ error_message }}</div></div>
+  <script>chh.sparks.forEach(function (c) { c.destroy(); }); chh.sparks = [];</script>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-striped table-hover chh-hosts" style="margin-bottom: 0;">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{% trans "Host" %}</th>
+          <th>{% trans "Status" %}</th>
+          <th style="min-width: 170px;">{% trans "CPU usage (now)" %}
+            <div class="chh-muted" style="font-weight: normal;"><span class="chh-dot chh-seg-user"></span>{% trans "user" %}<span class="chh-dot chh-seg-kernel"></span>{% trans "kernel" %}<span class="chh-dot chh-seg-iowait"></span>{% trans "I/O wait" %}</div></th>
+          <th class="text-right">{% trans "Avg (15m)" %}</th>
+          <th class="text-right">{% trans "I/O wait (15m)" %}</th>
+          <th class="text-right">{% trans "Frequency" %}</th>
+          <th>{% trans "Trend" %} <span class="chh-muted">(<span class="chh-range-label">{{ range_key }}</span>)</span></th>
+          <th class="text-right">{% trans "Last seen" %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="{% if row.status.key == 'critical' %}danger{% elif row.status.key == 'warning' %}warning{% endif %}">
+          <td class="text-muted">{{ forloop.counter }}</td>
+          <td><a href="#" class="chh-host-link" data-chh-host="{{ row.name }}">{{ row.name }}</a></td>
+          <td>{% include "admin/compute_host_health/_status_badge.html" with status=row.status %}</td>
+          <td>{% include "admin/compute_host_health/_cpu_bar.html" with detail=row.detail %}</td>
+          <td class="text-right">{% if row.cpu_avg is None %}<span class="text-muted">{% trans "n/a" %}</span>{% else %}{{ row.cpu_avg|floatformat:"-1" }}%{% endif %}</td>
+          <td class="text-right">{% if row.iowait_avg is None %}<span class="text-muted">{% trans "n/a" %}</span>{% else %}<strong{% if row.iowait_avg >= thresholds.iowait_warning %} class="text-warning"{% endif %}>{{ row.iowait_avg|floatformat:"-1" }}%</strong>{% endif %}</td>
+          <td class="text-right">{% if row.detail.frequency %}{{ row.detail.frequency|floatformat:0 }} MHz{% else %}<span class="text-muted">{% trans "n/a" %}</span>{% endif %}</td>
+          <td><canvas class="chh-spark" data-chh-spark="{{ row.name }}" data-chh-level="{{ row.status.key }}" width="110" height="28" aria-hidden="true"></canvas></td>
+          <td class="text-right {% if row.status.key == 'stale' %}text-danger{% else %}text-muted{% endif %}">{{ row.last_seen_age|default:"" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" class="text-center text-muted" style="padding: 20px;"><i class="fa fa-check-circle text-success"></i> {% trans "No hosts in this list." %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-footer chh-muted">
+    {% if data_stale %}<p class="text-warning" style="margin: 0 0 4px;"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not be refreshed: showing the last data received." %}</p>{% endif %}
+    <i class="fa fa-info-circle"></i>
+    {% if by == 'iowait' %}{% trans "Sorted by 15 minute average I/O wait." %}
+    {% elif by == 'stale' %}{% trans "Hosts that stopped reporting, oldest first." %}
+    {% elif by == 'band' %}{% trans "Hosts in the selected CPU band, busiest first." %}
+    {% else %}{% trans "Sorted by 15 minute average CPU usage." %}{% endif %}
+    {% blocktrans with shown=rows|length count total=total %}Showing {{ shown }} of {{ total }} matching host.{% plural %}Showing {{ shown }} of {{ total }} matching hosts.{% endblocktrans %}
+    {% if total > top_limit %}{% trans "Use “Look up a host” for any other host." %}{% endif %}
+  </div>
+  {% with data_id="chh-top-trends-"|add:uid %}{{ trends|json_script:data_id }}{% endwith %}
+  <script>
+  (function () {
+    chh.sparks.forEach(function (c) { c.destroy(); });
+    chh.sparks = [];
+    var trends = chh.readJson('chh-top-trends-{{ uid }}') || {};
+    document.querySelectorAll('canvas[data-chh-spark]').forEach(function (canvas) {
+      var data = trends[canvas.getAttribute('data-chh-spark')];
+      if (!data || !data.some(function (v) { return v !== null; })) { return; }
+      var level = canvas.getAttribute('data-chh-level');
+      chh.sparks.push(new Chart(canvas, {
+        type: 'line',
+        data: { labels: data.map(function () { return ''; }),
+          datasets: [{ data: data, spanGaps: false, borderWidth: 1.5, pointRadius: 0, tension: .3, fill: false,
+            borderColor: chh.colors[level] && level !== 'healthy' ? chh.colors[level] : chh.colors.info }] },
+        options: { responsive: false, animation: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: { x: { display: false }, y: { display: false, min: 0, max: 100 } } }
+      }));
+    });
+  })();
+  </script>
+  {% endif %}
+</div>

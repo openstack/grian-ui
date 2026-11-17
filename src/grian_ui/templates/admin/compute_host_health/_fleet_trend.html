@@ -1,0 +1,37 @@
+{% load i18n %}
+{% if error_message %}
+<div class="alert alert-danger" style="margin: 0;"><i class="fa fa-exclamation-circle"></i> {{ error_message }}</div>
+<script>chh.destroyChart('fleet');</script>
+{% elif not has_data %}
+<p class="text-muted text-center" style="padding: 20px;"><i class="fa fa-info-circle"></i> {% trans "No compute host data in the selected range." %}</p>
+<script>chh.destroyChart('fleet');</script>
+{% else %}
+<div class="chh-chart"><canvas id="chh-fleet-canvas-{{ uid }}" role="img" aria-label="{% trans 'Fleet CPU usage over time' %}"></canvas></div>
+{% with data_id="chh-fleet-data-"|add:uid %}{{ chart|json_script:data_id }}{% endwith %}
+{% if data_stale %}<p class="text-warning" style="margin: 6px 0 0;"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not be refreshed: showing the last data received." %}</p>{% endif %}
+<p class="chh-muted" style="margin: 6px 0 0;">{% trans "Median and 95th percentile across reporting hosts, plus the busiest host at each point in time. Dashed lines are the status thresholds. Gaps mean no data." %}</p>
+<script>
+(function () {
+  var d = chh.readJson('chh-fleet-data-{{ uid }}');
+  var labels = d.series.p50.map(function (p) { return chh.formatTime(p[0], d.range); });
+  var values = function (s) { return s.map(function (p) { return p[1]; }); };
+  var n = labels.length;
+  chh.replaceChart('fleet', document.getElementById('chh-fleet-canvas-{{ uid }}'), {
+    type: 'line',
+    data: { labels: labels, datasets: [
+      { label: '{% filter escapejs %}{% trans "Busiest host (max)" %}{% endfilter %}', data: values(d.series.max), borderColor: chh.colors.critical, borderWidth: 1.5, pointRadius: 0, tension: .25, fill: false },
+      { label: '{% filter escapejs %}{% trans "95th percentile" %}{% endfilter %}', data: values(d.series.p95), borderColor: chh.colors.warning, backgroundColor: 'rgba(240,173,78,.15)', borderWidth: 2, pointRadius: 0, tension: .25, fill: '+1' },
+      { label: '{% filter escapejs %}{% trans "Median" %}{% endfilter %}', data: values(d.series.p50), borderColor: chh.colors.info, backgroundColor: 'rgba(51,122,183,.12)', borderWidth: 2.5, pointRadius: 0, tension: .25, fill: 'origin' },
+      chh.thresholdLine(d.critical, chh.colors.critical, '{% filter escapejs %}{% trans "Critical" %}{% endfilter %} (' + d.critical + '%)', n),
+      chh.thresholdLine(d.warning, chh.colors.warning, '{% filter escapejs %}{% trans "Warning" %}{% endfilter %} (' + d.warning + '%)', n)
+    ] },
+    options: {
+      maintainAspectRatio: false, animation: false, spanGaps: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } },
+        tooltip: { callbacks: { label: function (c) { return c.dataset.label + ': ' + c.parsed.y + '%'; } } } },
+      scales: { y: { min: 0, max: 100, ticks: { callback: function (v) { return v + '%'; } } }, x: { ticks: { maxTicksLimit: 8 } } }
+    }
+  });
+})();
+</script>
+{% endif %}

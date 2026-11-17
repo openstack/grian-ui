@@ -1,0 +1,2 @@
+{% load i18n %}{% for host in suggestions %}<option value="{{ host.name }}">{% if host.status.key == "critical" %}{% trans "Critical" %}{% elif host.status.key == "warning" %}{% trans "Warning" %}{% elif host.status.key == "stale" %}{% trans "Stale" %}{% elif host.status.key == "unknown" %}{% trans "Unknown" %}{% endif %}</option>
+{% endfor %}

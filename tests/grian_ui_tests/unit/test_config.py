@@ -102,3 +102,69 @@ class GetOpenstackEndpointTypeTests(base.TestCase):
     def test_defaults_to_public(self, mock_settings):
         del mock_settings.OPENSTACK_ENDPOINT_TYPE
         self.assertEqual(config.get_openstack_endpoint_type(), "publicURL")
+
+
+class GetComputeHostThresholdsTests(base.TestCase):
+    @mock.patch("grian_ui.config._get_grian_plugin_config")
+    def test_defaults(self, mock_config):
+        mock_config.return_value = {"datasource": "fake"}
+        self.assertEqual(
+            config.get_compute_host_thresholds(),
+            config.DEFAULT_COMPUTE_HOST_THRESHOLDS,
+        )
+
+    @mock.patch("grian_ui.config._get_grian_plugin_config")
+    def test_defaults_are_not_mutated(self, mock_config):
+        mock_config.return_value = {
+            "compute_host_thresholds": {"cpu_warning": 70}
+        }
+        config.get_compute_host_thresholds()
+        self.assertEqual(
+            config.DEFAULT_COMPUTE_HOST_THRESHOLDS["cpu_warning"], 75
+        )
+
+    @mock.patch("grian_ui.config._get_grian_plugin_config")
+    def test_partial_override(self, mock_config):
+        mock_config.return_value = {
+            "compute_host_thresholds": {
+                "cpu_warning": 80,
+                "iowait_critical": 25.5,
+            }
+        }
+        result = config.get_compute_host_thresholds()
+        self.assertEqual(result["cpu_warning"], 80)
+        self.assertEqual(result["iowait_critical"], 25.5)
+        self.assertEqual(result["cpu_critical"], 90)
+
+    @mock.patch("grian_ui.config._get_grian_plugin_config")
+    def test_raises_on_non_dict(self, mock_config):
+        mock_config.return_value = {"compute_host_thresholds": [80]}
+        self.assertRaises(
+            config.ConfigurationError, config.get_compute_host_thresholds
+        )
+
+    @mock.patch("grian_ui.config._get_grian_plugin_config")
+    def test_raises_on_unknown_key(self, mock_config):
+        mock_config.return_value = {"compute_host_thresholds": {"ram": 80}}
+        self.assertRaises(
+            config.ConfigurationError, config.get_compute_host_thresholds
+        )
+
+    @mock.patch("grian_ui.config._get_grian_plugin_config")
+    def test_raises_on_invalid_value(self, mock_config):
+        for value in (-1, 100, 101, "80", True, None):
+            mock_config.return_value = {
+                "compute_host_thresholds": {"cpu_warning": value}
+            }
+            self.assertRaises(
+                config.ConfigurationError, config.get_compute_host_thresholds
+            )
+
+    @mock.patch("grian_ui.config._get_grian_plugin_config")
+    def test_raises_when_warning_above_critical(self, mock_config):
+        mock_config.return_value = {
+            "compute_host_thresholds": {"iowait_warning": 30}
+        }
+        self.assertRaises(
+            config.ConfigurationError, config.get_compute_host_thresholds
+        )

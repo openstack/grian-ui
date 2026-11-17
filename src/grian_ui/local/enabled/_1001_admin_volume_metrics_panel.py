@@ -10,5 +10,4 @@ PANEL_GROUP = "telemetry"
 # Python panel class of the PANEL to be added.
 ADD_PANEL = "grian_ui.content.volume_metrics.panel.VolumeMetrics"
 
-# A list of applications to be prepended to INSTALLED_APPS
-ADD_INSTALLED_APPS = ["grian_ui"]
+# The grian_ui app is added by _1000_admin_telemetry_panel_group.py.

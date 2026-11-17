@@ -16,3 +16,5 @@ documentation for details.
    :caption: Contents:
 
    admin-volume-metrics
+   admin-compute-host-health
+   user-compute-host-health

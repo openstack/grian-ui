@@ -6,15 +6,79 @@ Prometheus datasource implementation via Aetos.
 Provides access to Prometheus metrics through OpenStack observability service.
 """
 
+import math  # noqa: I001
+import re
+
 from keystoneauth1.identity import v3  # noqa: I001
 from keystoneauth1 import session  # noqa: I001
 from observabilityclient.utils import metric_utils as obs_client_utils
 
+from grian_ui import compute_health
 from grian_ui import config
 from grian_ui.datasource.api import DatasourceClient
 
 
 STALENESS_WINDOW = "10m"
+
+# Compute host CPU metrics (Nova compute monitors -> Ceilometer).
+COMPUTE_CPU_METRIC = "ceilometer_compute_node_cpu_percent"
+COMPUTE_IOWAIT_METRIC = "ceilometer_compute_node_cpu_iowait_percent"
+COMPUTE_DETAIL_METRICS = {
+    "ceilometer_compute_node_cpu_percent": "cpu",
+    "ceilometer_compute_node_cpu_user_percent": "user",
+    "ceilometer_compute_node_cpu_kernel_percent": "kernel",
+    "ceilometer_compute_node_cpu_iowait_percent": "iowait",
+    "ceilometer_compute_node_cpu_idle_percent": "idle",
+    "ceilometer_compute_node_cpu_frequency": "frequency",
+}
+# The host is the notification publisher. Nova publishes
+# compute.metrics.update with host=<hypervisor hostname> (nodename), so
+# vm_instance="compute.<hypervisor hostname>", which can differ from the
+# nova-compute service host.
+COMPUTE_HOST_LABEL = "vm_instance"
+COMPUTE_HOST_PREFIX = "compute."
+# Host names accepted when building per-host queries.
+_HOST_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+
+
+def _host_from_labels(labels):
+    value = labels.get(COMPUTE_HOST_LABEL, "")
+    if value.startswith(COMPUTE_HOST_PREFIX):
+        return value[len(COMPUTE_HOST_PREFIX) :]
+    return value or None
+
+
+def _host_selector(names):
+    """
+    Build a PromQL label matcher for the given host names.
+
+    Names that are not valid host names are dropped, so user input can never
+    change the structure of the query.
+    """
+    valid = [n for n in names if _HOST_NAME_RE.match(n or "")]
+    if not valid:
+        return None
+    # re.escape for the RE2 regex, then escape backslashes for the PromQL
+    # string literal.
+    alternatives = "|".join(re.escape(n).replace("\\", "\\\\") for n in valid)
+    prefix = re.escape(COMPUTE_HOST_PREFIX).replace("\\", "\\\\")
+    return f'{COMPUTE_HOST_LABEL}=~"{prefix}({alternatives})"'
+
+
+def _number(value, ndigits=None):
+    """
+    Convert a Prometheus sample value to a finite float or None.
+
+    Values used for status decisions are kept unrounded; pass ``ndigits``
+    only for display data such as chart points.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number) or math.isinf(number):
+        return None
+    return number if ndigits is None else round(number, ndigits)
 
 
 class PrometheusTelemetryClient(DatasourceClient):
@@ -281,6 +345,180 @@ class PrometheusTelemetryClient(DatasourceClient):
             return []
 
         return predictions
+
+    def _query_matrix(self, query):
+        """
+        Run an instant query that returns a range vector (e.g. a subquery).
+
+        Aetos only exposes the instant query endpoint, and
+        ``PrometheusAPIClient.query`` only parses instant vectors, so the
+        raw response is decoded here.
+
+        Returns:
+            list: ``[(labels, [[timestamp, value], ...]), ...]``
+        """
+        decoded = self.client._get("query", {"query": query})
+        data = decoded.get("data", {})
+        if data.get("resultType") != "matrix":
+            return []
+        series = []
+        for result in data.get("result", []):
+            points = []
+            for timestamp, value in result.get("values", []):
+                number = _number(value, 1)
+                if number is not None:
+                    points.append([float(timestamp), number])
+            series.append((result.get("metric", {}), points))
+        return series
+
+    def get_compute_host_snapshot(self) -> dict:
+        """
+        Get one 15 minute average per compute host, plus stale hosts.
+
+        Uses three queries whatever the number of hosts. Each result has one
+        series per host carrying only the host label.
+        """
+        host = COMPUTE_HOST_LABEL
+        fresh = (
+            f"max by ({host}) "
+            f"(last_over_time({COMPUTE_CPU_METRIC}"
+            f"[{compute_health.STALE_AFTER}]))"
+        )
+        window = compute_health.AVERAGE_WINDOW
+        cpu_query = (
+            f"max by ({host}) (avg_over_time({COMPUTE_CPU_METRIC}[{window}])) "
+            f"and on ({host}) {fresh}"
+        )
+        iowait_query = (
+            f"max by ({host}) "
+            f"(avg_over_time({COMPUTE_IOWAIT_METRIC}[{window}])) "
+            f"and on ({host}) {fresh}"
+        )
+        stale_query = (
+            f"max by ({host}) (max_over_time(timestamp({COMPUTE_CPU_METRIC})"
+            f"[{compute_health.STALE_LOOKBACK}:{compute_health.STALE_STEP}])) "
+            f"unless on ({host}) {fresh}"
+        )
+
+        hosts = {}
+        for metric in self.client.query(query=cpu_query) or []:
+            name = _host_from_labels(metric.labels)
+            if name:
+                hosts[name] = {
+                    "name": name,
+                    "cpu_avg": _number(metric.value),
+                    "iowait_avg": None,
+                }
+        for metric in self.client.query(query=iowait_query) or []:
+            name = _host_from_labels(metric.labels)
+            if name in hosts:
+                hosts[name]["iowait_avg"] = _number(metric.value)
+
+        stale = []
+        for metric in self.client.query(query=stale_query) or []:
+            name = _host_from_labels(metric.labels)
+            if name and name not in hosts:
+                stale.append({"name": name, "last_seen": float(metric.value)})
+
+        return {"hosts": list(hosts.values()), "stale": stale}
+
+    def get_compute_host_details(self, names: list) -> dict:
+        """
+        Get the latest CPU breakdown for at most a page of hosts.
+
+        Values are the last samples within STALE_AFTER, the same freshness
+        window as the status logic, so a host that just stopped reporting
+        still shows its last known values. Two queries.
+        """
+        selector = _host_selector(names)
+        if selector is None:
+            return {}
+        host = COMPUTE_HOST_LABEL
+        window = compute_health.STALE_AFTER
+        details = {}
+
+        # Range functions drop the metric name, so tag each metric with a
+        # "field" label and union them in a single query.
+        query = " or ".join(
+            f'label_replace(max by ({host}) (last_over_time('
+            f'{metric}{{{selector}}}[{window}])), "field", "{field}", "", "")'
+            for metric, field in COMPUTE_DETAIL_METRICS.items()
+        )
+        for metric in self.client.query(query=query) or []:
+            name = _host_from_labels(metric.labels)
+            field = metric.labels.get("field")
+            if name and field in _empty_details():
+                details.setdefault(name, _empty_details())[field] = _number(
+                    metric.value
+                )
+
+        last_seen_query = (
+            f"max by ({host}) (max_over_time(timestamp("
+            f"{COMPUTE_CPU_METRIC}{{{selector}}})[{window}:15s]))"
+        )
+        for metric in self.client.query(query=last_seen_query) or []:
+            name = _host_from_labels(metric.labels)
+            if name:
+                details.setdefault(name, _empty_details())["last_seen"] = (
+                    float(metric.value)
+                )
+        return details
+
+    def get_compute_host_trends(self, names: list, range_key: str) -> dict:
+        """Get the CPU trend of at most a page of hosts (one query)."""
+        selector = _host_selector(names)
+        if selector is None:
+            return {}
+        _key, window, step = compute_health.get_range(range_key)
+        query = (
+            f"max by ({COMPUTE_HOST_LABEL}) "
+            f"(avg_over_time({COMPUTE_CPU_METRIC}{{{selector}}}[{step}]))"
+            f"[{window}:{step}]"
+        )
+        trends = {}
+        for labels, points in self._query_matrix(query):
+            name = _host_from_labels(labels)
+            if name:
+                trends[name] = points
+        return trends
+
+    def get_compute_fleet_trend(self, range_key: str) -> dict:
+        """
+        Get the fleet median, 95th percentile and max CPU over time.
+
+        One query returning three series, whatever the number of hosts.
+        """
+        _key, window, step = compute_health.get_range(range_key)
+        # one value per host, so duplicated series (several notification
+        # agents or sg-core replicas) do not skew the percentiles
+        inner = (
+            f"max by ({COMPUTE_HOST_LABEL}) "
+            f"(avg_over_time({COMPUTE_CPU_METRIC}[{step}]))"
+        )
+        query = (
+            f'(label_replace(quantile(0.5, {inner}), "stat", "p50", "", "")'
+            f' or label_replace(quantile(0.95, {inner}), "stat", "p95", "", "")'
+            f' or label_replace(max({inner}), "stat", "max", "", ""))'
+            f"[{window}:{step}]"
+        )
+        trend = {"p50": [], "p95": [], "max": []}
+        for labels, points in self._query_matrix(query):
+            stat = labels.get("stat")
+            if stat in trend:
+                trend[stat] = points
+        return trend
+
+
+def _empty_details():
+    return {
+        "cpu": None,
+        "user": None,
+        "kernel": None,
+        "iowait": None,
+        "idle": None,
+        "frequency": None,
+        "last_seen": None,
+    }
 
 
 def get_client(request) -> DatasourceClient:

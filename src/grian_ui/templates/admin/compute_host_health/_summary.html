@@ -1,0 +1,102 @@
+{% load i18n %}
+{% if error_message %}
+<div class="alert alert-danger"><i class="fa fa-exclamation-circle"></i> {{ error_message }}</div>
+{% elif not summary.known %}
+<div class="panel panel-default"><div class="panel-body chh-empty">
+  <i class="fa fa-server"></i>
+  <h4>{% trans "No compute host metrics available" %}</h4>
+  <p>{% trans "No compute host has reported compute.node.cpu.* metrics recently." %}</p>
+  <p class="chh-muted">{% blocktrans %}These metrics come from the Nova CPU monitor. Set <code>[DEFAULT] compute_monitors = cpu.virt_driver</code> in <code>nova.conf</code> on the compute nodes and check that the Ceilometer notification agent is running.{% endblocktrans %}</p>
+</div></div>
+{% else %}
+{% if summary.all_stale %}
+<div class="alert alert-danger">
+  <strong><i class="fa fa-exclamation-circle" aria-hidden="true"></i> {% trans "No compute host is reporting" %}</strong>
+  {% if summary.pipeline_down %}
+  <p>{% blocktrans count n=summary.stale %}{{ n }} host stopped reporting at about the same time.{% plural %}All {{ n }} known hosts stopped reporting at about the same time.{% endblocktrans %}
+  {% trans "This usually means the telemetry pipeline is down (Ceilometer notification agent, sg-core or Prometheus) rather than the hosts themselves." %}</p>
+  {% else %}
+  <p>{% if summary.stale == 1 %}{% trans "The only known host stopped reporting." %}{% else %}{% blocktrans count n=summary.stale %}{{ n }} known host stopped reporting.{% plural %}All {{ n }} known hosts stopped reporting.{% endblocktrans %}{% endif %}
+  {% trans "Check the hosts (nova-compute) and the telemetry pipeline (Ceilometer notification agent, sg-core, Prometheus)." %}</p>
+  {% endif %}
+</div>
+{% endif %}
+<div class="row">
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel chh-card {% if summary.stale %}chh-warn{% else %}chh-info{% endif %}" title="{% blocktrans with lookback=stale_lookback %}Hosts that reported in the last {{ lookback }}. Hosts silent for longer are not shown.{% endblocktrans %}">
+      <div class="panel-heading">
+        <i class="fa fa-server chh-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="chh-value">{{ summary.reporting }}<small> / {{ summary.known }}</small></div>
+          <div class="chh-label">{% trans "Hosts reporting" %}</div>
+          <div class="chh-sub">{% if summary.stale %}{% blocktrans count n=summary.stale %}{{ n }} stale{% plural %}{{ n }} stale{% endblocktrans %}{% else %}{% trans "all reporting" %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel chh-card {% if summary.cpu_p95 is None %}chh-info{% elif summary.cpu_p95 >= thresholds.cpu_critical %}chh-crit{% elif summary.cpu_p95 >= thresholds.cpu_warning %}chh-warn{% else %}chh-ok{% endif %}">
+      <div class="panel-heading">
+        <i class="fa fa-tachometer chh-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="chh-value">{% if summary.cpu_median is None %}–{% else %}{{ summary.cpu_median|floatformat:0 }}%<small> / {{ summary.cpu_p95|floatformat:0 }}%</small>{% endif %}</div>
+          <div class="chh-label">{% trans "Fleet CPU: median / p95" %}</div>
+          <div class="chh-sub">{% trans "15 min average" %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel chh-card {% if summary.critical %}chh-crit{% elif summary.attention_total %}chh-warn{% else %}chh-ok{% endif %}">
+      <div class="panel-heading">
+        <i class="fa {% if summary.attention_total %}fa-exclamation-triangle{% else %}fa-check-circle{% endif %} chh-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="chh-value">{{ summary.attention_total }}</div>
+          <div class="chh-label">{% trans "Hosts needing attention" %}</div>
+          <div class="chh-sub">{% blocktrans with c=summary.critical w=summary.warning s=summary.stale %}{{ c }} critical · {{ w }} warning · {{ s }} stale{% endblocktrans %}{% if summary.unknown %} · {% blocktrans with u=summary.unknown %}{{ u }} unknown{% endblocktrans %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel chh-card {% if not summary.max_iowait %}chh-info{% elif summary.max_iowait.value >= thresholds.iowait_critical %}chh-crit{% elif summary.max_iowait.value >= thresholds.iowait_warning %}chh-warn{% else %}chh-ok{% endif %}">
+      <div class="panel-heading">
+        <i class="fa fa-hdd-o chh-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="chh-value">{% if summary.max_iowait %}{{ summary.max_iowait.value|floatformat:"-1" }}%{% else %}–{% endif %}</div>
+          <div class="chh-label">{% trans "Highest I/O wait" %}</div>
+          <div class="chh-sub">{% if summary.max_iowait %}{% blocktrans with host=summary.max_iowait.name %}on {{ host }}{% endblocktrans %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if summary.attention_total %}
+<div class="alert {% if summary.critical %}alert-danger{% else %}alert-warning{% endif %}" style="margin-bottom: 0;">
+  <strong><i class="fa fa-bell" aria-hidden="true"></i>
+    {% blocktrans count n=summary.attention_total %}{{ n }} host needs attention{% plural %}{{ n }} hosts need attention{% endblocktrans %}</strong>
+  <span class="chh-muted">({% blocktrans with c=summary.critical w=summary.warning s=summary.stale %}{{ c }} critical, {{ w }} warning, {{ s }} stale{% endblocktrans %}{% if summary.unknown %}, {% blocktrans with u=summary.unknown %}{{ u }} unknown{% endblocktrans %}{% endif %}{% if summary.attention_total > top_limit %}, {% blocktrans with n=top_limit %}{{ n }} worst shown{% endblocktrans %}{% endif %})</span>
+  <ul class="chh-attention">
+    {% for row in summary.attention %}
+    <li>{% include "admin/compute_host_health/_status_badge.html" with status=row.status %}
+      <a href="#" class="chh-host-link" data-chh-host="{{ row.name }}">{{ row.name }}</a>:
+      {% if row.status.key == "stale" %}{% blocktrans with age=row.last_seen_age %}last seen {{ age }}{% endblocktrans %}{% else %}{{ row.status.reasons|join:", " }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% if fetched_at %}
+{% if data_stale %}
+<div class="alert alert-warning" style="margin: 8px 0 0;"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i>
+  {% blocktrans %}Telemetry data could not be refreshed. Showing the last data received, from <span class="chh-clock" data-ts="{{ fetched_ts }}"></span>.{% endblocktrans %}</div>
+{% else %}
+<div class="chh-muted text-right" style="margin-top: 4px;">{% trans "Data from" %} <span class="chh-clock" data-ts="{{ fetched_at|floatformat:'0u' }}"></span></div>
+{% endif %}
+<script>
+document.querySelectorAll('#chh-summary .chh-clock').forEach(function (el) {
+  el.textContent = chh.formatClock(parseInt(el.getAttribute('data-ts'), 10));
+});
+</script>
+{% endif %}
+{% endif %}

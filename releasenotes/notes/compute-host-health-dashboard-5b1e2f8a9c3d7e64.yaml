@@ -1,0 +1,10 @@
+---
+features:
+  - |
+    Add the Compute Host Health dashboard under Admin > Telemetry. It shows
+    which compute hosts are overloaded, waiting on I/O or no longer
+    reporting, based on the Ceilometer ``compute.node.cpu.*`` meters
+    (requires the Nova ``cpu.virt_driver`` compute monitor). Every panel
+    renders a bounded amount of data so the dashboard scales to large
+    clouds. Status thresholds can be configured with
+    ``GRIAN_PLUGIN['compute_host_thresholds']``.

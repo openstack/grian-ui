@@ -1,0 +1,279 @@
+{% extends 'base.html' %}
+{% load i18n %}
+{% load static %}
+{% block title %}{% trans "Compute Host Health" %}{% endblock %}
+
+{% block page_header %}
+  {% include "horizon/common/_page_header.html" with title=_("Compute Host Health") %}
+{% endblock page_header %}
+
+{% block main %}
+<!-- HTMX -->
+<script src="{% static 'vendor/htmx.js' %}"></script>
+<!-- Chart.js -->
+<script src="{% static 'vendor/chart.umd.js' %}"></script>
+
+<style>
+.chh-section { margin-bottom: 20px; }
+.chh-toolbar { margin-bottom: 15px; }
+.chh-muted { color: #777; font-size: 12px; }
+.chh-loading { padding: 25px; text-align: center; color: #999; }
+.chh-card { border: 0; color: #fff; }
+.chh-card .panel-heading { display: flex; align-items: center; min-height: 110px; padding: 18px 15px; color: #fff; border: 0; border-radius: 3px; }
+.chh-card.chh-info .panel-heading { background: #337ab7; }
+.chh-card.chh-ok .panel-heading { background: #5cb85c; }
+.chh-card.chh-warn .panel-heading { background: #f0ad4e; }
+.chh-card.chh-crit .panel-heading { background: #d9534f; }
+.chh-card .chh-icon { font-size: 3em; opacity: .3; margin-right: 15px; }
+.chh-card .chh-value { font-size: 2.3em; font-weight: 300; line-height: 1; margin-bottom: 4px; }
+.chh-card .chh-value small { font-size: .45em; color: #fff; }
+.chh-card .chh-label { font-size: .95em; opacity: .95; }
+.chh-card .chh-sub { font-size: .85em; opacity: .9; margin-top: 3px; }
+.chh-attention { margin: 6px 0 0; padding-left: 0; list-style: none; columns: 2; }
+.chh-attention li { padding: 2px 0; break-inside: avoid; }
+.chh-cpu-bar { position: relative; height: 18px; background: #eee; border-radius: 3px; overflow: hidden; min-width: 120px; }
+.chh-cpu-bar .chh-seg { height: 100%; float: left; }
+.chh-seg-user { background: #5bc0de; }
+.chh-seg-kernel { background: #337ab7; }
+.chh-seg-iowait { background: #f0ad4e; }
+.chh-cpu-bar .chh-txt { position: absolute; width: 100%; text-align: center; line-height: 18px; font-size: 11px; font-weight: 600; color: #222; }
+.chh-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 10px; vertical-align: middle; }
+.chh-chart { position: relative; height: 260px; }
+.chh-spark { width: 110px; height: 28px; }
+.chh-hosts td, .chh-hosts th { vertical-align: middle !important; }
+.chh-host-link { cursor: pointer; font-weight: 600; }
+.chh-empty { padding: 35px 20px; text-align: center; color: #777; }
+.chh-empty .fa { font-size: 3em; opacity: .4; display: block; margin-bottom: 10px; }
+</style>
+
+<script>
+window.chh = window.chh || {};
+chh.charts = chh.charts || {};
+chh.sparks = chh.sparks || [];
+chh.colors = { healthy: '#5cb85c', warning: '#f0ad4e', critical: '#d9534f', info: '#337ab7' };
+chh.readJson = function (id) {
+  var el = document.getElementById(id);
+  return el ? JSON.parse(el.textContent) : null;
+};
+chh.formatTime = function (ts, range) {
+  var d = new Date(ts * 1000);
+  if (range === '7d') {
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+      d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+chh.replaceChart = function (key, canvas, config) {
+  if (chh.charts[key]) { chh.charts[key].destroy(); }
+  chh.charts[key] = canvas ? new Chart(canvas, config) : null;
+};
+chh.thresholdLine = function (value, color, label, n) {
+  var data = [];
+  for (var i = 0; i < n; i++) { data.push(value); }
+  return { label: label, data: data, borderColor: color, borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false };
+};
+chh.setRange = function (key) {
+  document.getElementById('chh-range').value = key;
+  document.querySelectorAll('#chh-range-buttons button').forEach(function (b) {
+    var active = b.getAttribute('data-range') === key;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('.chh-range-label').forEach(function (el) { el.textContent = key; });
+  htmx.trigger(document.body, 'chh-range');
+  if (document.getElementById('chh-lookup-name').value.trim()) {
+    htmx.trigger(document.getElementById('chh-lookup-form'), 'submit');
+  }
+};
+chh.setTop = function (by, band) {
+  document.getElementById('chh-by').value = by;
+  document.getElementById('chh-band').value = (band === undefined || band === null) ? '' : band;
+  htmx.trigger(document.body, 'chh-top');
+};
+// Announce lookups the user started, not the periodic refreshes.
+chh.announceLookup = false;
+document.addEventListener('submit', function (e) {
+  if (e.target.id === 'chh-lookup-form') { chh.announceLookup = true; }
+});
+['htmx:sendError', 'htmx:responseError'].forEach(function (name) {
+  document.body.addEventListener(name, function (e) {
+    if (e.detail.elt && e.detail.elt.id === 'chh-lookup-form') { chh.announceLookup = false; }
+  });
+});
+document.body.addEventListener('htmx:afterSwap', function (e) {
+  if (e.detail.target.id !== 'chh-lookup-result' || !chh.announceLookup) { return; }
+  chh.announceLookup = false;
+  var heading = e.detail.target.querySelector('h4, p');
+  document.getElementById('chh-lookup-status').textContent = heading ? heading.textContent.trim() : '';
+});
+// Picking a suggestion from the list runs the lookup right away. Browsers
+// report a datalist pick as a replacement (or without an input type), and
+// the value must match a suggestion exactly, so an autocorrect replacement
+// never submits half-typed text. Enter or "Show" always work as well.
+document.addEventListener('input', function (e) {
+  if (e.target.id !== 'chh-lookup-name') { return; }
+  if (e.inputType && e.inputType !== 'insertReplacementText') { return; }
+  var value = e.target.value;
+  var picked = Array.prototype.some.call(
+    document.querySelectorAll('#chh-host-names option'),
+    function (o) { return o.value === value; });
+  if (picked) { htmx.trigger(document.getElementById('chh-lookup-form'), 'submit'); }
+});
+chh.lookup = function (name) {
+  chh.announceLookup = true;
+  var input = document.getElementById('chh-lookup-name');
+  input.value = name;
+  htmx.trigger(document.getElementById('chh-lookup-form'), 'submit');
+  document.getElementById('chh-lookup-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+chh.formatClock = function (ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+chh.destroyChart = function (key) {
+  if (chh.charts[key]) { chh.charts[key].destroy(); chh.charts[key] = null; }
+};
+document.body.addEventListener('htmx:responseError', function (e) {
+  // expired session: Horizon answers 401 to AJAX requests
+  if (e.detail.xhr && e.detail.xhr.status === 401) { window.location.reload(); }
+});
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible') { htmx.trigger(document.body, 'chh-refresh'); }
+});
+document.addEventListener('click', function (e) {
+  var link = e.target.closest('[data-chh-host]');
+  if (link) { e.preventDefault(); chh.lookup(link.getAttribute('data-chh-host')); }
+});
+</script>
+
+{% if error_message %}
+<div class="alert alert-danger"><i class="fa fa-exclamation-circle"></i> {{ error_message }}</div>
+{% endif %}
+
+<div id="chh-root" hx-headers='{"X-Requested-With": "XMLHttpRequest"}'>
+<!-- Shared request parameters for the partials -->
+<form id="chh-controls" onsubmit="return false;">
+  <input type="hidden" name="range" id="chh-range" value="{{ default_range }}">
+  <input type="hidden" name="by" id="chh-by" value="cpu">
+  <input type="hidden" name="band" id="chh-band" value="">
+</form>
+
+<div class="row chh-toolbar">
+  <div class="col-sm-7">
+    <div class="btn-group btn-group-sm" role="group" aria-label="{% trans 'Time range' %}" id="chh-range-buttons">
+      {% for range in ranges %}
+      <button type="button" class="btn btn-default{% if range == default_range %} active{% endif %}"
+              data-range="{{ range }}" aria-pressed="{% if range == default_range %}true{% else %}false{% endif %}"
+              onclick="chh.setRange('{{ range }}')">{{ range }}</button>
+      {% endfor %}
+    </div>
+    <span class="chh-muted" style="margin-left: 8px;">{% trans "Range for the trend charts. Status always uses the last 15 minutes." %}</span>
+  </div>
+  <div class="col-sm-5 text-right chh-muted" style="line-height: 30px;">
+    <i class="fa fa-refresh"></i>
+    {% blocktrans with seconds=refresh_seconds %}Refreshes every {{ seconds }}s{% endblocktrans %}
+  </div>
+</div>
+
+<!-- 1 + 2. Summary cards and attention list -->
+<div id="chh-summary" class="chh-section"
+     hx-get="{% url 'horizon:admin:compute_host_health:summary' %}"
+     hx-trigger="load, every {{ refresh_seconds }}s [document.visibilityState === 'visible'], chh-refresh from:body"
+     hx-swap="innerHTML">
+  <div class="chh-loading"><i class="fa fa-spinner fa-spin"></i> {% trans "Loading…" %}</div>
+</div>
+
+<!-- 3 + 4. Fleet charts -->
+<div class="row chh-section">
+  <div class="col-md-7">
+    <div class="panel panel-default">
+      <div class="panel-heading">
+        <h3 class="panel-title"><i class="fa fa-line-chart"></i> {% trans "Fleet CPU usage over time" %}
+          <small class="text-muted">(<span class="chh-range-label">{{ default_range }}</span>)</small></h3>
+      </div>
+      <div class="panel-body"
+           hx-get="{% url 'horizon:admin:compute_host_health:fleet_trend' %}"
+           hx-include="#chh-controls"
+           hx-trigger="load, every {{ refresh_seconds }}s [document.visibilityState === 'visible'], chh-refresh from:body, chh-range from:body"
+           hx-swap="innerHTML">
+        <div class="chh-loading"><i class="fa fa-spinner fa-spin"></i> {% trans "Loading…" %}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-5">
+    <div class="panel panel-default">
+      <div class="panel-heading">
+        <h3 class="panel-title"><i class="fa fa-bar-chart"></i> {% trans "Hosts by CPU usage" %}
+          <small class="text-muted">{% trans "(15 min average)" %}</small></h3>
+      </div>
+      <div class="panel-body"
+           hx-get="{% url 'horizon:admin:compute_host_health:distribution' %}"
+           hx-trigger="load, every {{ refresh_seconds }}s [document.visibilityState === 'visible'], chh-refresh from:body"
+           hx-swap="innerHTML">
+        <div class="chh-loading"><i class="fa fa-spinner fa-spin"></i> {% trans "Loading…" %}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 5. Top hosts (bounded) -->
+<div class="chh-section"
+     hx-get="{% url 'horizon:admin:compute_host_health:top_hosts' %}"
+     hx-include="#chh-controls"
+     hx-trigger="load, every {{ refresh_seconds }}s [document.visibilityState === 'visible'], chh-refresh from:body, chh-range from:body, chh-top from:body"
+     hx-swap="innerHTML">
+  <div class="panel panel-default"><div class="chh-loading"><i class="fa fa-spinner fa-spin"></i> {% trans "Loading…" %}</div></div>
+</div>
+
+<!-- 6. Host lookup -->
+<div class="panel panel-default chh-section" id="chh-lookup-panel">
+  <div class="panel-heading">
+    <h3 class="panel-title"><i class="fa fa-search"></i> {% trans "Look up a host" %}</h3>
+  </div>
+  <div class="panel-body">
+    <form class="form-inline" id="chh-lookup-form" role="search"
+          hx-get="{% url 'horizon:admin:compute_host_health:host' %}"
+          hx-include="#chh-range"
+          hx-target="#chh-lookup-result"
+          hx-sync="#chh-lookup-panel:replace"
+          hx-swap="innerHTML">
+      <label class="sr-only" for="chh-lookup-name">{% trans "Host name" %}</label>
+      <input type="search" class="form-control input-sm" id="chh-lookup-name" name="name"
+             placeholder="{% trans 'Hypervisor hostname' %}" style="width: 280px;" autocomplete="off"
+             spellcheck="false" autocapitalize="off" autocorrect="off"
+             list="chh-host-names"
+             hx-get="{% url 'horizon:admin:compute_host_health:host_suggestions' %}"
+             hx-trigger="input changed delay:250ms, focus once"
+             hx-target="#chh-host-names" hx-swap="innerHTML"
+             hx-include="this" hx-sync="this:replace">
+      {# Suggestions are fetched as you type (at most 20, from the cached snapshot). #}
+      <datalist id="chh-host-names"></datalist>
+      <button class="btn btn-primary btn-sm" type="submit"><i class="fa fa-search"></i> {% trans "Show" %}</button>
+      <span class="chh-muted" style="margin-left: 8px;">{% trans "Type to get suggestions. Shows the status, CPU breakdown and trend of one host. Tip: click any host name on this page." %}</span>
+    </form>
+    <div id="chh-lookup-result"></div>
+    <p id="chh-lookup-status" class="sr-only" aria-live="polite"></p>
+  </div>
+</div>
+
+{% if thresholds %}
+<div class="panel panel-default chh-section">
+  <div class="panel-body chh-muted" style="padding: 10px 15px;">
+    <i class="fa fa-info-circle"></i> <strong>{% trans "Status rules" %}</strong> {% trans "(averages over the last 15 minutes):" %}
+    <span class="label label-danger">{% trans "Critical" %}</span>
+    {% blocktrans with cpu=thresholds.cpu_critical io=thresholds.iowait_critical %}CPU ≥ {{ cpu }}% or I/O wait ≥ {{ io }}%{% endblocktrans %} ·
+    <span class="label label-warning">{% trans "Warning" %}</span>
+    {% blocktrans with cpu=thresholds.cpu_warning io=thresholds.iowait_warning %}CPU ≥ {{ cpu }}% or I/O wait ≥ {{ io }}%{% endblocktrans %} ·
+    <span class="label label-default">{% trans "Stale" %}</span>
+    {% blocktrans with lookback=stale_lookback after=stale_after %}seen in the last {{ lookback }} but not in the last {{ after }}{% endblocktrans %} ·
+    <span class="label label-success">{% trans "Healthy" %}</span> {% trans "otherwise." %}
+    <br><i class="fa fa-exclamation-triangle"></i>
+    {% blocktrans with lookback=stale_lookback %}Hosts that have not reported for more than {{ lookback }} are no longer shown.{% endblocktrans %}
+  </div>
+</div>
+{% endif %}
+
+</div>
+
+<p class="chh-muted"><i class="fa fa-database"></i>
+  {% trans "Source: Ceilometer compute.node.cpu.* meters (Nova compute monitors) through Prometheus and Aetos." %}</p>
+{% endblock %}

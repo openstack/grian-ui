@@ -1,0 +1,67 @@
+{% load i18n %}
+{% if not name %}
+<script>chh.destroyChart('host');</script>
+{% else %}
+{# Re-fetch this host on the page's refresh cycle while it is displayed. #}
+<div hx-get="{% url 'horizon:admin:compute_host_health:host' %}?name={{ name|urlencode }}"
+     hx-include="#chh-range"
+     hx-trigger="every {{ refresh_seconds }}s [document.visibilityState === 'visible'], chh-refresh from:body"
+     hx-sync="#chh-lookup-panel:drop"
+     hx-target="#chh-lookup-result" hx-swap="innerHTML"></div>
+{% if data_stale and not error_message %}<p class="text-warning" style="margin: 6px 0 0;"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not be refreshed: showing the last data received." %}</p>{% endif %}
+{% if error_message %}
+<div class="alert alert-danger" style="margin: 12px 0 0;"><i class="fa fa-exclamation-circle"></i> {{ error_message }}</div>
+<script>chh.destroyChart('host');</script>
+{% elif not found %}
+<p class="text-muted" style="margin: 12px 0 0;"><i class="fa fa-question-circle"></i>
+  {% blocktrans with lookback=stale_lookback %}No compute host named <strong>{{ name }}</strong> has reported CPU metrics in the last {{ lookback }}.{% endblocktrans %}</p>
+<script>chh.destroyChart('host');</script>
+{% elif status.key == "stale" %}
+<div style="margin-top: 12px;">
+  <h4>{{ name }} {% include "admin/compute_host_health/_status_badge.html" %}</h4>
+  <p>{% blocktrans with age=last_seen_age %}This host stopped reporting. Last seen about {{ age }}.{% endblocktrans %}</p>
+  <p class="chh-muted">{% trans "Check that nova-compute is running on the host and that it can reach the message bus." %}</p>
+</div>
+<script>chh.destroyChart('host');</script>
+{% else %}
+<div class="row" style="margin-top: 12px;">
+  <div class="col-md-5">
+    <h4 style="margin-top: 0;">{{ name }} {% include "admin/compute_host_health/_status_badge.html" %}</h4>
+    <table class="table table-condensed" style="margin-bottom: 0;">
+      <tr><th style="width: 45%;">{% trans "CPU usage (latest)" %}</th><td>{% include "admin/compute_host_health/_cpu_bar.html" %}</td></tr>
+      <tr><th>{% trans "Average CPU (15m)" %}</th><td>{% if host.cpu_avg is None %}{% trans "n/a" %}{% else %}{{ host.cpu_avg|floatformat:"-1" }}%{% endif %}</td></tr>
+      <tr><th>{% trans "Average I/O wait (15m)" %}</th><td>{% if host.iowait_avg is None %}{% trans "n/a" %}{% else %}{{ host.iowait_avg|floatformat:"-1" }}%{% endif %}</td></tr>
+      <tr><th>{% trans "User / kernel / I/O wait / idle" %}</th><td>{% if detail.cpu is None %}{% trans "n/a" %}{% else %}{{ detail.user|floatformat:"-1" }}% / {{ detail.kernel|floatformat:"-1" }}% / {{ detail.iowait|floatformat:"-1" }}% / {{ detail.idle|floatformat:"-1" }}%{% endif %}</td></tr>
+      <tr><th>{% trans "Frequency" %}</th><td>{% if detail.frequency %}{{ detail.frequency|floatformat:0 }} MHz{% else %}{% trans "n/a" %}{% endif %}</td></tr>
+      <tr><th>{% trans "Last seen" %}</th><td>{{ last_seen_age|default:_("n/a") }}</td></tr>
+      {% if status.reasons %}<tr><th>{% trans "Why" %}</th><td>{{ status.reasons|join:", " }}</td></tr>{% endif %}
+    </table>
+  </div>
+  <div class="col-md-7">
+    <div style="position: relative; height: 220px;"><canvas id="chh-host-canvas-{{ uid }}" role="img" aria-label="{% trans 'CPU usage of the host over time' %}"></canvas></div>
+  </div>
+</div>
+{% with data_id="chh-host-data-"|add:uid %}{{ chart|json_script:data_id }}{% endwith %}
+<script>
+(function () {
+  var d = chh.readJson('chh-host-data-{{ uid }}');
+  var labels = d.host.map(function (p) { return chh.formatTime(p[0], d.range); });
+  var median = {};
+  d.fleet_median.forEach(function (p) { median[p[0]] = p[1]; });
+  var n = labels.length;
+  chh.replaceChart('host', document.getElementById('chh-host-canvas-{{ uid }}'), {
+    type: 'line',
+    data: { labels: labels, datasets: [
+      { label: '{% filter escapejs %}{% blocktrans with host=name %}{{ host }} CPU usage{% endblocktrans %}{% endfilter %}', data: d.host.map(function (p) { return p[1]; }), borderColor: chh.colors.info, backgroundColor: 'rgba(51,122,183,.12)', fill: 'origin', pointRadius: 0, tension: .25, borderWidth: 2 },
+      { label: '{% filter escapejs %}{% trans "Fleet median" %}{% endfilter %}', data: d.host.map(function (p) { return median[p[0]] === undefined ? null : median[p[0]]; }), borderColor: '#999', borderDash: [4, 3], pointRadius: 0, borderWidth: 1, fill: false },
+      chh.thresholdLine(d.critical, chh.colors.critical, '{% filter escapejs %}{% trans "Critical" %}{% endfilter %}', n),
+      chh.thresholdLine(d.warning, chh.colors.warning, '{% filter escapejs %}{% trans "Warning" %}{% endfilter %}', n)
+    ] },
+    options: { maintainAspectRatio: false, animation: false, spanGaps: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } } },
+      scales: { y: { min: 0, max: 100, ticks: { callback: function (v) { return v + '%'; } } }, x: { ticks: { maxTicksLimit: 8 } } } }
+  });
+})();
+</script>
+{% endif %}
+{% endif %}

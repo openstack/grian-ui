@@ -99,3 +99,58 @@ class FakeTelemetryClientTests(base.TestCase):
         self.assertIsNone(predictions[0]["days_until_full"])
         self.assertTrue(predictions[1]["will_run_out"])
         self.assertEqual(predictions[1]["days_until_full"], 24.5)
+
+
+class FakeComputeHostTests(base.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.client = fake.get_client()
+
+    def test_snapshot_shape(self):
+        snapshot = self.client.get_compute_host_snapshot()
+        self.assertEqual(len(snapshot["hosts"]), 24)
+        self.assertEqual(len(snapshot["stale"]), 2)
+        for host in snapshot["hosts"]:
+            self.assertEqual(set(host), {"name", "cpu_avg", "iowait_avg"})
+        for host in snapshot["stale"]:
+            self.assertEqual(set(host), {"name", "last_seen"})
+
+    def test_snapshot_contains_hosts_needing_attention(self):
+        from grian_ui import compute_health
+        from grian_ui import config
+
+        summary = compute_health.summarize(
+            self.client.get_compute_host_snapshot(),
+            config.DEFAULT_COMPUTE_HOST_THRESHOLDS,
+        )
+        self.assertEqual(summary["critical"], 2)
+        self.assertEqual(summary["warning"], 2)
+        self.assertEqual(summary["stale"], 2)
+
+    def test_details_only_for_requested_hosts(self):
+        details = self.client.get_compute_host_details(
+            ["compute-03", "unknown"]
+        )
+        self.assertEqual(list(details), ["compute-03"])
+        detail = details["compute-03"]
+        self.assertAlmostEqual(
+            detail["user"] + detail["kernel"] + detail["iowait"],
+            detail["cpu"],
+            places=0,
+        )
+
+    def test_host_trends(self):
+        trends = self.client.get_compute_host_trends(["compute-01"], "1h")
+        points = trends["compute-01"]
+        self.assertEqual(len(points), 60)
+        timestamps = [p[0] for p in points]
+        self.assertEqual(timestamps, sorted(timestamps))
+        self.assertTrue(all(0 <= p[1] <= 100 for p in points))
+
+    def test_fleet_trend(self):
+        trend = self.client.get_compute_fleet_trend("6h")
+        self.assertEqual(set(trend), {"p50", "p95", "max"})
+        self.assertEqual(len(trend["p50"]), 72)
+        for p50, p95, top in zip(trend["p50"], trend["p95"], trend["max"]):
+            self.assertLessEqual(p50[1], p95[1])
+            self.assertLessEqual(p95[1], top[1])
