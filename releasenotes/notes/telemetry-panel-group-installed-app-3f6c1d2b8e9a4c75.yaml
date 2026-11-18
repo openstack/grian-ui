@@ -1,0 +1,19 @@
+---
+upgrade:
+  - |
+    The ``grian_ui`` Django application is now added to Horizon by the
+    Telemetry panel group enabled file
+    (``_1000_admin_telemetry_panel_group.py``) instead of the Volume Metrics
+    panel file (``_1001_admin_volume_metrics_panel.py``). Copy both files
+    from ``grian_ui/local/enabled`` to Horizon's ``local/enabled`` directory
+    together. Mixing versions breaks Horizon: the new ``_1000`` with the old
+    ``_1001`` lists the application twice and Horizon does not start
+    ("Application labels aren't unique"), and the old ``_1000`` with the new
+    ``_1001`` does not add the application, so the Volume Metrics panel
+    fails to load its templates. The DevStack plugin copies all the files
+    and needs no change.
+  - |
+    To disable a Telemetry panel, set ``DISABLED = True`` in the panel's own
+    enabled file. Disabling only the panel group file now also removes the
+    ``grian_ui`` application while the panels stay registered: they move to
+    an "Other" group in the Admin dashboard and their pages fail.
