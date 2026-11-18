@@ -311,3 +311,87 @@ class GetCapacityPredictionsTests(base.TestCase):
         # decline_per_day = (1500 - (-1500)) / 30 = 100
         # days_until_full = 1500 / 100 = 15.0
         self.assertEqual(result[0]["days_until_full"], 15.0)
+
+
+class NumberTests(base.TestCase):
+    def test_number(self):
+        from grian_ui.datasource import prometheus
+
+        self.assertEqual(prometheus.number("42.04"), 42.04)
+        self.assertEqual(prometheus.number("42.04", 1), 42.0)
+        self.assertEqual(prometheus.number(3), 3.0)
+        self.assertIsNone(prometheus.number("NaN"))
+        self.assertIsNone(prometheus.number("+Inf"))
+        self.assertIsNone(prometheus.number("-Inf"))
+        self.assertIsNone(prometheus.number(None))
+        self.assertIsNone(prometheus.number("abc"))
+
+
+class QueryMatrixTests(base.TestCase):
+    def _matrix(self, series):
+        return {
+            "status": "success",
+            "data": {
+                "resultType": "matrix",
+                "result": [
+                    {"metric": labels, "values": values}
+                    for labels, values in series
+                ],
+            },
+        }
+
+    def test_decodes_series_and_drops_non_finite_values(self):
+        client, prom = _make_client()
+        prom._get.return_value = self._matrix(
+            [
+                ({"a": "1"}, [[100, "1.04"], [160, "NaN"], [220, "2"]]),
+                ({"a": "2"}, []),
+            ]
+        )
+        result = client.query_matrix("up[1h:1m]")
+        prom._get.assert_called_once_with("query", {"query": "up[1h:1m]"})
+        self.assertEqual(
+            result,
+            [({"a": "1"}, [[100.0, 1.04], [220.0, 2.0]]), ({"a": "2"}, [])],
+        )
+
+    def test_evaluation_time(self):
+        client, prom = _make_client()
+        prom._get.return_value = self._matrix([])
+        client.query_matrix("up[1h:1m]", time=1700000000.25)
+        prom._get.assert_called_once_with(
+            "query", {"query": "up[1h:1m]", "time": "1700000000.250"}
+        )
+
+    def test_ndigits(self):
+        client, prom = _make_client()
+        prom._get.return_value = self._matrix([({}, [[1, "1.23456"]])])
+        self.assertEqual(
+            client.query_matrix("x", ndigits=3), [({}, [[1.0, 1.235]])]
+        )
+
+    def test_ignores_vector_results(self):
+        client, prom = _make_client()
+        prom._get.return_value = {
+            "status": "success",
+            "data": {"resultType": "vector", "result": []},
+        }
+        with self.assertLogs("grian_ui.datasource.prometheus", "WARNING"):
+            self.assertEqual(client.query_matrix("up"), [])
+
+
+class SessionTimeoutTests(base.TestCase):
+    def test_aetos_requests_time_out(self):
+        from grian_ui.datasource import prometheus
+
+        with (
+            mock.patch("grian_ui.datasource.prometheus.session") as sess,
+            mock.patch("grian_ui.datasource.prometheus.config"),
+            mock.patch("grian_ui.datasource.prometheus.v3"),
+            mock.patch("grian_ui.datasource.prometheus.obs_client_utils"),
+        ):
+            prometheus.PrometheusTelemetryClient(mock.MagicMock())
+        sess.Session.assert_called_once()
+        self.assertEqual(
+            sess.Session.call_args.kwargs["timeout"], prometheus.QUERY_TIMEOUT
+        )

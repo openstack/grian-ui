@@ -102,3 +102,100 @@ class GetOpenstackEndpointTypeTests(base.TestCase):
     def test_defaults_to_public(self, mock_settings):
         del mock_settings.OPENSTACK_ENDPOINT_TYPE
         self.assertEqual(config.get_openstack_endpoint_type(), "publicURL")
+
+
+class GetThresholdsTests(base.TestCase):
+    DEFAULTS = {"cpu_warning": 5, "cpu_critical": 20, "drops_warning": 0}
+
+    def _get(self, overrides, maximum=None):
+        with mock.patch(
+            "grian_ui.config._get_grian_plugin_config",
+            return_value={"datasource": "fake", "th": overrides},
+        ):
+            return config.get_thresholds("th", self.DEFAULTS, maximum)
+
+    def test_defaults_when_not_configured(self):
+        result = self._get(None)
+        self.assertEqual(result, self.DEFAULTS)
+        result["cpu_warning"] = 99
+        # the caller's defaults are never modified
+        self.assertEqual(self.DEFAULTS["cpu_warning"], 5)
+
+    def test_per_key_override(self):
+        result = self._get({"cpu_warning": 10, "drops_warning": 2.5})
+        self.assertEqual(
+            result,
+            {"cpu_warning": 10, "cpu_critical": 20, "drops_warning": 2.5},
+        )
+
+    def test_not_a_dict(self):
+        self.assertRaisesRegex(
+            config.ConfigurationError, r"\['th'\] must be a dict", self._get, 5
+        )
+
+    def test_unknown_key(self):
+        self.assertRaisesRegex(
+            config.ConfigurationError,
+            "Unknown key 'bogus'.*Valid keys: cpu_warning",
+            self._get,
+            {"bogus": 1},
+        )
+
+    def test_invalid_values(self):
+        for value in (-1, "10", None, True, float("nan"), float("inf")):
+            self.assertRaisesRegex(
+                config.ConfigurationError,
+                "must be a number of at least 0",
+                self._get,
+                {"cpu_warning": value},
+            )
+
+    def test_maximum(self):
+        self.assertEqual(
+            self._get({"cpu_critical": 99.9}, 100)["cpu_critical"], 99.9
+        )
+        self.assertRaisesRegex(
+            config.ConfigurationError,
+            "must be a number from 0 to less than 100, got 100",
+            self._get,
+            {"cpu_critical": 100},
+            100,
+        )
+
+    def test_warning_above_critical(self):
+        self.assertRaisesRegex(
+            config.ConfigurationError,
+            "'cpu_warning'\\] must not be greater than 'cpu_critical'",
+            self._get,
+            {"cpu_warning": 30},
+        )
+
+    def test_warning_without_critical_pair(self):
+        # drops_warning has no critical counterpart: no ordering check
+        self.assertEqual(
+            self._get({"drops_warning": 1000})["drops_warning"], 1000
+        )
+
+
+class CacheMaxItemBytesTests(base.TestCase):
+    def _get(self, **values):
+        with mock.patch(
+            "grian_ui.config._get_grian_plugin_config",
+            return_value=dict({"datasource": "fake"}, **values),
+        ):
+            return config.get_cache_max_item_bytes()
+
+    def test_default(self):
+        self.assertEqual(self._get(), config.DEFAULT_CACHE_MAX_ITEM_BYTES)
+
+    def test_override(self):
+        self.assertEqual(self._get(cache_max_item_bytes=4_000_000), 4_000_000)
+
+    def test_invalid(self):
+        for value in (0, -1, 1.5, "1000", True, None):
+            self.assertRaisesRegex(
+                config.ConfigurationError,
+                "cache_max_item_bytes",
+                self._get,
+                cache_max_item_bytes=value,
+            )

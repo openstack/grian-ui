@@ -6,15 +6,43 @@ Prometheus datasource implementation via Aetos.
 Provides access to Prometheus metrics through OpenStack observability service.
 """
 
-from keystoneauth1.identity import v3  # noqa: I001
-from keystoneauth1 import session  # noqa: I001
+import logging
+import math
+
+from keystoneauth1 import session
+from keystoneauth1.identity import v3
 from observabilityclient.utils import metric_utils as obs_client_utils
 
 from grian_ui import config
 from grian_ui.datasource.api import DatasourceClient
 
 
+LOG = logging.getLogger(__name__)
+
 STALENESS_WINDOW = "10m"
+#: Timeout of the requests to Aetos, in seconds (per connection attempt and
+#: per read, as for every keystoneauth session), so a hung backend fails the
+#: query instead of holding a Horizon worker thread indefinitely. A
+#: computation running several queries can still take longer than
+#: grian_ui.cache.MAX_COMPUTE_SECONDS; another request then takes the lock
+#: over.
+QUERY_TIMEOUT = 30
+
+
+def number(value, ndigits=None):
+    """
+    Convert a Prometheus sample value to a finite float or None.
+
+    Values used for status decisions should be kept unrounded; pass
+    ``ndigits`` only for display data such as chart points.
+    """
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(result) or math.isinf(result):
+        return None
+    return result if ndigits is None else round(result, ndigits)
 
 
 class PrometheusTelemetryClient(DatasourceClient):
@@ -48,7 +76,7 @@ class PrometheusTelemetryClient(DatasourceClient):
             domain_id=domain_id,
         )
 
-        sess = session.Session(auth=auth)
+        sess = session.Session(auth=auth, timeout=QUERY_TIMEOUT)
 
         adapter_options = {
             "service_type": "metric-storage",
@@ -281,6 +309,48 @@ class PrometheusTelemetryClient(DatasourceClient):
             return []
 
         return predictions
+
+    def query_matrix(self, query, ndigits=None, time=None):
+        """
+        Run an instant query that returns a range vector (e.g. a subquery).
+
+        Aetos only exposes the instant query endpoint, and
+        ``PrometheusAPIClient.query`` only parses instant vectors, so the
+        raw response is decoded here. Non-finite values are dropped.
+
+        Args:
+            ndigits: round values (for display data), or None
+            time: evaluation time (epoch seconds), or None for "now". Pass
+                the time the chart grid is built from
+                (:func:`grian_ui.timeseries.range_grid`), so the points and
+                the grid line up even if the clocks differ.
+
+        Returns:
+            list: ``[(labels, [[timestamp, value], ...]), ...]``
+        """
+        params = {"query": query}
+        # PrometheusAPIClient has no public call that returns the raw
+        # response; _get is the method its own query() uses.
+        if time is not None:
+            params["time"] = f"{time:.3f}"
+        decoded = self.client._get("query", params)
+        data = decoded.get("data", {})
+        if data.get("resultType") != "matrix":
+            LOG.warning(
+                "Expected a range vector, got %s, for query %s",
+                data.get("resultType"),
+                query,
+            )
+            return []
+        series = []
+        for result in data.get("result", []):
+            points = []
+            for timestamp, value in result.get("values", []):
+                sample = number(value, ndigits)
+                if sample is not None:
+                    points.append([float(timestamp), sample])
+            series.append((result.get("metric", {}), points))
+        return series
 
 
 def get_client(request) -> DatasourceClient:
