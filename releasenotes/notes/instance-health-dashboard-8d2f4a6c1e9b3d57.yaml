@@ -1,0 +1,15 @@
+---
+features:
+  - |
+    Add the Instance Health dashboard under Admin > Telemetry. It lists the
+    instances needing attention across all projects: instances in error,
+    crashed, active but not running or stuck in a task (from the Compute
+    API), running instances that stopped reporting metrics, and instances
+    with CPU contention, memory pressure, slow disks or network packet
+    loss (from the Ceilometer instance meters). It also shows instance
+    counts by state and per symptom, and per-instance trends. Every panel
+    renders a bounded amount of data; the instance list of all projects is
+    read from Nova every 2 minutes and shared by the administrators of a
+    region. Thresholds can be configured with
+    ``GRIAN_PLUGIN['instance_health_thresholds']`` and the rate window with
+    ``GRIAN_PLUGIN['instance_health_rate_window']``.

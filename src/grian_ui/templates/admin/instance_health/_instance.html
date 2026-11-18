@@ -1,0 +1,76 @@
+{% load i18n %}
+{# Charts of this instance are only kept when this response draws them. #}
+{% if not chart or not has_trends %}<script>ih.destroyCharts('detail-{{ instance_id|escapejs }}-');</script>{% endif %}
+{% if invalid %}
+<p class="text-danger" style="margin: 6px 0;">{% trans "Invalid instance ID." %}</p>
+{% elif error_message %}
+<div data-ih-nodata class="alert {% if loading %}alert-info{% else %}alert-danger{% endif %}" style="margin: 6px 0;"><i class="fa {% if loading %}fa-spinner fa-spin{% else %}fa-exclamation-circle{% endif %}" aria-hidden="true"></i> {{ error_message }}</div>
+{% include "admin/instance_health/_retry.html" %}
+{% else %}
+{% if row.fault %}
+<p class="text-danger" style="margin: 6px 0;"><i class="fa fa-exclamation-circle" aria-hidden="true"></i> <strong>{% trans "Fault:" %}</strong> {{ row.fault }}</p>
+{% endif %}
+{% for issue in row.issues %}
+{% if issue.symptom == 'state' %}
+<p style="margin: 6px 0;">
+  {% if issue.code == 'error' %}{% trans "The Compute API reports an error. See the fault in the instance details." %}
+  {% elif issue.code == 'not_running' %}{% trans "The Compute API reports the instance as active, but the hypervisor reports it is not running. Nova usually syncs this within minutes; if it does not, check the nova-compute log on the host." %}
+  {% elif issue.code == 'stuck' %}{% blocktrans with task=issue.params.task %}The instance has been in task “{{ task }}” for longer than expected. Check the nova-compute and nova-conductor logs.{% endblocktrans %}
+  {% else %}{{ issue.text }}{% endif %}
+</p>
+{% elif issue.symptom == 'telemetry' %}
+<p style="margin: 6px 0;">{% trans "The instance is running, but Ceilometer has not reported samples for it recently. Check the ceilometer-polling (compute agent) service on its host." %}</p>
+{% endif %}
+{% endfor %}
+{% if chart and has_trends %}
+<div class="row">
+  {% for c in chart.charts %}
+  <div class="col-md-3 col-sm-6">
+    <strong class="ih-muted" style="color: #333;">{{ c.label }} ({{ c.unit }})</strong>
+    <div class="ih-mini"><canvas id="ih-mini-{{ uid }}-{{ c.key }}" role="img" aria-label="{{ c.label }}" aria-describedby="ih-mini-{{ uid }}-{{ c.key }}-text"></canvas></div>
+    <p class="sr-only" id="ih-mini-{{ uid }}-{{ c.key }}-text">{{ c.summary }}</p>
+  </div>
+  {% endfor %}
+</div>
+{% with data_id="ih-detail-data-"|add:uid %}{{ chart|json_script:data_id }}{% endwith %}
+<script>
+(function () {
+  var d = ih.readJson('ih-detail-data-{{ uid }}');
+  var prefix = 'detail-{{ instance_id }}-';
+  ih.destroyCharts(prefix);
+  d.charts.forEach(function (c) {
+    var canvas = document.getElementById('ih-mini-{{ uid }}-' + c.key);
+    if (!canvas) { return; }
+    var labels = c.series.map(function (p) { return ih.formatTime(p[0], d.range); });
+    var n = labels.length;
+    ih.charts[prefix + c.key] = new Chart(canvas, {
+      type: 'line',
+      data: { labels: labels, datasets: [
+        { label: c.label, data: c.series.map(function (p) { return p[1]; }), borderColor: ih.colors.info,
+          backgroundColor: 'rgba(51,122,183,.12)', fill: 'origin', borderWidth: 2, pointRadius: 0, tension: .25, spanGaps: false },
+        ih.thresholdLine(c.warning, ih.colors.warning, '{% filter escapejs %}{% trans "Warning" %}{% endfilter %}', n),
+        ih.thresholdLine(c.critical, ih.colors.critical, '{% filter escapejs %}{% trans "Critical" %}{% endfilter %}', n)
+      ] },
+      options: { maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: false },
+          tooltip: { callbacks: { label: function (ctx) { return ctx.dataset.label + ': ' + ctx.parsed.y + ' ' + c.unit; } } } },
+        scales: { y: { beginAtZero: true, ticks: { maxTicksLimit: 4 } }, x: { ticks: { maxTicksLimit: 4 } } } }
+    });
+  });
+})();
+</script>
+<p class="ih-muted" style="margin: 6px 0 0;">{% trans "Dashed lines are the warning and critical thresholds. Gaps mean no data." %}</p>
+{% elif chart %}
+<p class="text-muted" style="margin: 6px 0;"><i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "No metrics for this instance in the selected range. Stopped instances do not report metrics." %}</p>
+{% elif not_running and not row.issues %}
+<p class="text-muted" style="margin: 6px 0;"><i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "Not running: stopped instances do not report metrics." %}</p>
+{% elif trends_unavailable %}
+<p class="text-warning" style="margin: 6px 0;"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "The trends could not be loaded." %}</p>
+{% endif %}
+<p class="ih-muted" style="margin: 6px 0 0;">
+  {# stable ids: htmx gives focus back to them when the detail reloads #}
+  {% if urls.detail %}<a href="{{ urls.detail }}" id="ih-detail-link-{{ instance_id }}"><i class="fa fa-external-link" aria-hidden="true"></i> {% trans "Instance details" %}</a>
+  | <a href="{{ urls.log }}" id="ih-log-link-{{ instance_id }}"><i class="fa fa-file-text-o" aria-hidden="true"></i> {% trans "Console log" %}</a>{% endif %}
+  {% if data_stale %}<span class="text-warning"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not be refreshed: showing the last data received." %}</span>{% elif data_old %}<span><i class="fa fa-refresh" aria-hidden="true"></i> {% trans "Refreshing: the data shown may be a few minutes old." %}</span>{% endif %}
+</p>
+{% endif %}

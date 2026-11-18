@@ -1,0 +1,11 @@
+{# Shared data is still being computed by another request: reload this partial (only) shortly. #}
+{% if loading %}<span id="ih-retry-{{ uid }}" class="ih-retry" hidden></span>
+<script>setTimeout(function () {
+  // hidden tab: the page refreshes every section when it becomes visible
+  if (document.visibilityState !== 'visible') { return; }
+  {% if instance_id %}ih.loadDetail('{{ instance_id }}');{% else %}
+  // the section's own loader (the closest ancestor with hx-get)
+  var node = document.getElementById('ih-retry-{{ uid }}');
+  var target = node && node.closest('[hx-get]');
+  if (target) { htmx.trigger(target, 'ih-retry'); }{% endif %}
+}, 3000);</script>{% endif %}

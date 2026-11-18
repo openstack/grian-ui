@@ -7,6 +7,7 @@ Validates and provides typed access to Django settings.
 """
 
 import math
+import re
 
 from django.conf import settings
 
@@ -169,6 +170,71 @@ def get_cache_max_item_bytes():
         raise ConfigurationError(
             "GRIAN_PLUGIN['cache_max_item_bytes'] must be a positive "
             f"integer, got {value!r}"
+        )
+    return value
+
+
+#: Default instance health thresholds. A symptom is a warning above the
+#: ``_warning`` value and critical above the ``_critical`` value.
+DEFAULT_INSTANCE_HEALTH_THRESHOLDS = {
+    # share of vCPU time spent waiting for a host CPU, percent
+    "cpu_wait_warning": 5,
+    "cpu_wait_critical": 20,
+    # guest swap in + out, MiB/s
+    "swap_warning": 0,
+    "swap_critical": 10,
+    # average time per disk request on the worst device, ms
+    "disk_latency_warning": 20,
+    "disk_latency_critical": 100,
+    # dropped + failed packets on all interfaces, packets/s
+    "packet_loss_warning": 0,
+    "packet_loss_critical": 10,
+    # minutes in the same task (e.g. spawning) before it counts as stuck
+    "stuck_task_minutes": 30,
+}
+
+#: Default window of the rate() calls. Must hold at least two samples, so
+#: at least twice the Ceilometer polling interval (300 s by default).
+DEFAULT_INSTANCE_HEALTH_RATE_WINDOW = "10m"
+_RATE_WINDOW_RE = re.compile(r"^([1-9][0-9]*)([mh])$")
+
+
+def get_instance_health_thresholds():
+    """
+    Get the instance health thresholds.
+
+    Override per key with ``GRIAN_PLUGIN['instance_health_thresholds']``.
+    """
+    return get_thresholds(
+        "instance_health_thresholds", DEFAULT_INSTANCE_HEALTH_THRESHOLDS
+    )
+
+
+def get_instance_health_rate_window():
+    """
+    Get the window of the instance health rate() calls, e.g. ``"10m"``.
+
+    Override with ``GRIAN_PLUGIN['instance_health_rate_window']`` (minutes
+    or hours, at most 6h). Use at least twice the Ceilometer polling
+    interval.
+
+    Raises:
+        ConfigurationError: If the value is not a valid window
+    """
+    value = _get_grian_plugin_config().get(
+        "instance_health_rate_window", DEFAULT_INSTANCE_HEALTH_RATE_WINDOW
+    )
+    # fullmatch: "$" would accept a trailing newline
+    match = (
+        _RATE_WINDOW_RE.fullmatch(value) if isinstance(value, str) else None
+    )
+    minutes = None
+    if match:
+        minutes = int(match.group(1)) * (60 if match.group(2) == "h" else 1)
+    if minutes is None or minutes > 360:
+        raise ConfigurationError(
+            "GRIAN_PLUGIN['instance_health_rate_window'] must be a duration "
+            f"in minutes or hours up to 6h, such as '10m', got {value!r}"
         )
     return value
 

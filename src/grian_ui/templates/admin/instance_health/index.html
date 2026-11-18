@@ -1,0 +1,451 @@
+{% extends 'base.html' %}
+{% load i18n %}
+{% load static %}
+{% block title %}{% trans "Instance Health" %}{% endblock %}
+
+{% block page_header %}
+  {% include "horizon/common/_page_header.html" with title=_("Instance Health") %}
+{% endblock page_header %}
+
+{% block main %}
+<!-- HTMX -->
+<script src="{% static 'vendor/htmx.js' %}"></script>
+<!-- Chart.js -->
+<script src="{% static 'vendor/chart.umd.js' %}"></script>
+
+<style>
+.ih-section { margin-bottom: 20px; }
+.ih-toolbar { margin-bottom: 15px; }
+.ih-muted { color: #595959; font-size: 12px; }
+.ih-loading { padding: 25px; text-align: center; color: #595959; }
+.ih-card { border: 0; color: #fff; }
+.ih-card .panel-heading { display: flex; align-items: center; min-height: 110px; padding: 18px 15px; color: #fff; border: 0; border-radius: 3px; }
+.ih-card.ih-info .panel-heading { background: #337ab7; }
+/* white text on the cards: 4.5:1 at least (Bootstrap's colours are lighter) */
+.ih-card.ih-ok .panel-heading { background: #2b7a2b; }
+.ih-card.ih-warn .panel-heading { background: #a35c00; }
+.ih-card.ih-crit .panel-heading { background: #b52b27; }
+.ih-card.ih-unknown .panel-heading { background: #666; }
+.ih-card .ih-icon { font-size: 3em; opacity: .3; margin-right: 15px; }
+.ih-card .ih-value { font-size: 2.3em; font-weight: 300; line-height: 1; margin-bottom: 4px; }
+.ih-card .ih-value small { font-size: .45em; color: #fff; }
+/* no opacity on the card texts: it lowers their contrast */
+.ih-card .ih-label { font-size: .95em; }
+.ih-card .ih-sub { font-size: .85em; margin-top: 3px; }
+.ih-state-bar { display: flex; height: 26px; border-radius: 4px; overflow: hidden; background: #fff; gap: 2px; }
+.ih-state-bar .ih-seg { height: 100%; min-width: 4px; border: 0; padding: 0; }
+.ih-state-bar button.ih-seg { cursor: pointer; }
+.ih-state-bar button.ih-seg:hover { opacity: .8; }
+/* a two-tone ring, visible on every segment colour (3:1), inside the bar */
+.ih-state-bar button.ih-seg:focus { outline: 0; box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px #333; }
+.ih-state-legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.ih-state-legend .btn-link { color: #333; padding: 0; }
+.ih-dim { opacity: .7; }  /* dimmed text still meets 4.5:1 */
+.ih-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.ih-st-active { background: #2b7a2b; }
+.ih-st-shutoff { background: #999; }
+.ih-st-paused { background: #5bc0de; }
+.ih-st-suspended { background: #337ab7; }
+.ih-st-shelved { background: #7a5fa8; }
+.ih-st-in_task { background: #c7c7c7; }
+.ih-st-active_not_running { background: #a35c00; }
+.ih-st-error { background: #b52b27; }
+.ih-st-other { background: #e2e2e2; }
+.ih-symptoms { display: flex; flex-wrap: wrap; gap: 10px; }
+.ih-sym { flex: 1 1 150px; background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 10px 12px; text-align: left; color: #333; }
+.ih-sym:hover:not([disabled]) { border-color: #337ab7; }
+.ih-sym.active { border: 2px solid #337ab7; padding: 9px 11px; background: #f4f8fc; }
+.ih-sym[disabled] { opacity: .55; cursor: not-allowed; }
+/* spans (a button holds phrasing content only), shown as blocks */
+.ih-sym .ih-t, .ih-sym .ih-n, .ih-sym .ih-d, .ih-sym .ih-split { display: block; }
+.ih-sym .ih-n { font-size: 1.9em; font-weight: 300; line-height: 1.1; }
+.ih-sym .ih-t { font-weight: 600; }
+.ih-sym .ih-d, .ih-sym .ih-split { font-size: 11px; color: #595959; }
+.ih-table td, .ih-table th { vertical-align: middle !important; }
+.ih-table tr.ih-row { cursor: pointer; }
+.ih-table tr.ih-detail > td { background: #fafafa; border-top: 0; }
+.ih-issue { display: inline-block; margin: 1px 4px 1px 0; padding: 1px 6px; border-radius: 3px; font-size: 11px; border: 1px solid; white-space: nowrap; }
+.ih-issue-critical { border-color: #d9534f; color: #a94442; background: #f9e5e4; }
+.ih-issue-warning { border-color: #f0ad4e; color: #6b4f1d; background: #fcf3e3; }
+.ih-spark { width: 110px; height: 28px; }
+.ih-mini { position: relative; height: 150px; }
+.ih-toggle { color: #595959; padding: 0 4px; }
+.ih-filters .form-control { display: inline-block; width: auto; margin-right: 6px; }
+#ih-root .ih-clear { padding: 0 2px; vertical-align: baseline; color: #1a4f80; }
+.ih-rules td, .ih-rules th { padding: 2px 12px 2px 0; vertical-align: top; }
+/* Horizon's theme colours fail WCAG AA in this page's contexts (white,
+   highlighted rows, their hover colours) */
+#ih-root .text-muted { color: #595959; }
+#ih-root .text-warning { color: #6b4f1d; }
+#ih-root .ih-table a { color: #1a4f80; }
+#ih-root .label-success { background-color: #2b7a2b; }
+#ih-root .label-warning { background-color: #a35c00; }
+#ih-root .label-danger { background-color: #b52b27; }
+#ih-root #ih-q::placeholder { color: #595959; opacity: 1; }
+#ih-root .btn-group .btn.active { background-color: #1a4f80; border-color: #1a4f80; color: #fff; font-weight: 600; }
+/* badges: the same height whatever the icon */
+#ih-root .label { display: inline-block; box-sizing: border-box; height: 20px; line-height: 20px; padding-top: 0; padding-bottom: 0; vertical-align: middle; }
+#ih-root .label .fa { font-size: 11px; line-height: inherit; vertical-align: top; }
+/* summary cards: the same height in a row */
+#ih-root .ih-cards { display: flex; flex-wrap: wrap; }
+#ih-root .ih-cards::before, #ih-root .ih-cards::after { display: none; }
+#ih-root .ih-cards > [class*="col-"] { display: flex; }
+#ih-root .ih-cards .ih-card { flex: 1; display: flex; flex-direction: column; }
+#ih-root .ih-cards .ih-card .panel-heading { flex: 1; }
+/* how this page is calculated */
+.ih-how > summary { cursor: pointer; }
+.ih-how > summary .panel-title { display: inline; }
+</style>
+
+<script>
+window.ih = window.ih || {};
+ih.charts = ih.charts || {};
+ih.sparks = ih.sparks || [];
+ih.open = ih.open || {};
+// chart colours meet the 3:1 contrast WCAG asks for graphics on white
+ih.colors = { ok: '#2b7a2b', warning: '#a35c00', critical: '#b52b27', info: '#337ab7' };
+ih.urls = {
+  instance: '{% url "horizon:admin:instance_health:instance" %}'
+};
+ih.readJson = function (id) {
+  var el = document.getElementById(id);
+  return el ? JSON.parse(el.textContent) : null;
+};
+ih.formatTime = function (ts, range) {
+  var d = new Date(ts * 1000);
+  if (range === '7d') {
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
+      d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+ih.destroyChart = function (key) {
+  if (ih.charts[key]) { ih.charts[key].destroy(); delete ih.charts[key]; }
+};
+ih.destroyCharts = function (prefix) {
+  Object.keys(ih.charts).forEach(function (key) {
+    if (key.indexOf(prefix) === 0) { ih.destroyChart(key); }
+  });
+};
+ih.thresholdLine = function (value, color, label, n) {
+  var data = [];
+  for (var i = 0; i < n; i++) { data.push(value); }
+  return { label: label, data: data, borderColor: color, borderDash: [5, 4], borderWidth: 1, pointRadius: 0, fill: false };
+};
+ih.control = function (name) { return document.getElementById('ih-' + name); };
+ih.text = {
+  notRefreshed: '{% filter escapejs %}{% trans "Could not be refreshed: showing the last data received." %}{% endfilter %}',
+  notLoaded: '{% filter escapejs %}{% trans "Could not be loaded: trying again at the next refresh." %}{% endfilter %}'
+};
+// times of the data, in the browser's time zone
+ih.showClocks = function (root) {
+  (root || document).querySelectorAll('.ih-clock[data-ih-time]').forEach(function (el) {
+    el.textContent = new Date(el.getAttribute('data-ih-time') * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  });
+};
+// Announce the list after a filter change the user made, not after the
+// periodic refreshes.
+ih.announceList = false;
+ih.announce = function (text) {
+  var status = document.getElementById('ih-status');
+  status.textContent = '';
+  setTimeout(function () { status.textContent = text; }, 100);
+};
+// Project filter options: [[id, label], ...]. Rebuilt only when they change,
+// so an open drop-down is not closed by the periodic refresh.
+ih.updateProjects = function (dataId) {
+  var options = ih.readJson(dataId) || [];
+  var select = ih.control('project');
+  var current = Array.prototype.slice.call(select.options, 1).map(function (o) { return [o.value, o.textContent]; });
+  if (JSON.stringify(current) === JSON.stringify(options)) { return; }
+  var selected = select.value;
+  while (select.options.length > 1) { select.remove(1); }
+  options.forEach(function (o) {
+    var option = document.createElement('option');
+    option.value = o[0];
+    option.textContent = o[1];
+    option.selected = o[0] === selected;
+    select.appendChild(option);
+  });
+};
+// a filter change only re-attaches the open rows' details; the periodic
+// refresh and a range change reload them
+ih.reloadDetails = true;
+ih.refreshList = function () { ih.announceList = true; ih.reloadDetails = false; htmx.trigger(document.body, 'ih-filter'); };
+// Symptom tiles and state segments: clicking the active one clears it. Only
+// one of the two applies at a time.
+// The open rows' details depend on the state list (live states): a state
+// change reloads them, other filter changes only re-attach them.
+ih.refreshFor = function (previousState) {
+  ih.refreshList();
+  if (ih.control('state').value !== previousState) { ih.reloadDetails = true; }
+};
+ih.toggleFilter = function (name, value) {
+  var other = name === 'symptom' ? 'state' : 'symptom';
+  var input = ih.control(name);
+  var state = ih.control('state').value;
+  input.value = input.value === value ? '' : value;
+  ih.control(other).value = '';
+  ih.refreshFor(state);
+};
+ih.clearFilters = function () {
+  var state = ih.control('state').value;
+  ['symptom', 'state', 'project', 'q'].forEach(function (name) { ih.control(name).value = ''; });
+  ih.control('severity').value = '0';
+  ih.refreshFor(state);
+  // the button goes away with the filters: keep the keyboard focus nearby
+  ih.control('q').focus();
+};
+ih.setRange = function (key) {
+  ih.control('range').value = key;
+  document.querySelectorAll('#ih-range-buttons button').forEach(function (b) {
+    var active = b.getAttribute('data-range') === key;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('.ih-range-label').forEach(function (el) { el.textContent = key; });
+  htmx.trigger(document.body, 'ih-range');
+};
+// Row details: open rows stay open across refreshes and range changes.
+// Each detail body is its own request source with "queue last" sync, so
+// several open rows load in parallel and a new load waits for the current
+// one instead of aborting it.
+ih.loadDetail = function (id) {
+  var body = document.querySelector('[data-ih-detail-body="' + id + '"]');
+  if (!body) { return; }
+  // the list's state: a state list is live from the Compute API
+  htmx.ajax('GET', ih.urls.instance + '?id=' + encodeURIComponent(id) + '&range=' + encodeURIComponent(ih.control('range').value) +
+            '&state=' + encodeURIComponent(ih.control('state').value),
+            { source: body, target: body, swap: 'innerHTML', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+    .catch(function () { /* the list was re-rendered; it reloads open rows */ });
+};
+// Keep the detail bodies of open rows (their charts and any request in
+// flight) while the list is swapped, then put them back, so charts do not
+// blink out on every refresh and no request is aborted.
+ih.savedDetails = {};
+document.body.addEventListener('htmx:beforeSwap', function (e) {
+  // nothing is swapped on an error response: keep the open details in place
+  if (e.detail.target.id !== 'ih-attention' || !e.detail.shouldSwap) { return; }
+  // details saved by an earlier swap without rows (loading, error) are kept
+  var active = document.activeElement;
+  Object.keys(ih.open).forEach(function (id) {
+    var body = document.querySelector('[data-ih-detail-body="' + id + '"]');
+    if (body) {
+      // moving the body drops the keyboard focus: put it back afterwards
+      // (kept while the bodies stay saved, e.g. behind a loading list)
+      if (active && body.contains(active)) { ih.focusedDetail = active; }
+      ih.savedDetails[id] = body.parentNode.removeChild(body);
+    }
+  });
+});
+ih.setOpen = function (id, open, reload) {
+  var row = document.querySelector('tr.ih-row[data-ih-id="' + id + '"]');
+  var detail = document.querySelector('tr.ih-detail[data-ih-detail="' + id + '"]');
+  if (!row || !detail) { delete ih.open[id]; return; }
+  detail.classList.toggle('hidden', !open);
+  var button = row.querySelector('.ih-toggle');
+  button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  var icon = button.querySelector('.fa');
+  icon.classList.toggle('fa-caret-down', open);
+  icon.classList.toggle('fa-caret-right', !open);
+  if (open) {
+    ih.open[id] = true;
+    var body = detail.querySelector('[data-ih-detail-body]');
+    var kept = !!ih.savedDetails[id];
+    if (kept) {
+      body.parentNode.replaceChild(ih.savedDetails[id], body);
+      delete ih.savedDetails[id];
+      if (ih.focusedDetail && document.contains(ih.focusedDetail)) {
+        ih.focusedDetail.focus();
+        ih.focusedDetail = null;
+      }
+    }
+    // a row back in the list after a filter change has nothing to show yet
+    if (reload !== false || !kept) { ih.loadDetail(id); }
+  }
+  else { delete ih.open[id]; ih.destroyCharts('detail-' + id); }
+};
+ih.toggleRow = function (id) { ih.setOpen(id, !ih.open[id]); };
+ih.reopenRows = function (reload) {
+  Object.keys(ih.open).forEach(function (id) {
+    // a row filtered out of the list closes; destroy its charts
+    if (!document.querySelector('tr.ih-row[data-ih-id="' + id + '"]')) { ih.destroyCharts('detail-' + id); }
+    ih.setOpen(id, true, reload);
+  });
+  ih.savedDetails = {};
+  ih.focusedDetail = null;
+};
+document.addEventListener('click', function (e) {
+  var tile = e.target.closest('[data-ih-symptom]');
+  if (tile && !tile.disabled) { ih.toggleFilter('symptom', tile.getAttribute('data-ih-symptom')); return; }
+  var state = e.target.closest('[data-ih-state]');
+  if (state) { ih.toggleFilter('state', state.getAttribute('data-ih-state')); return; }
+  if (e.target.closest('[data-ih-clear]')) { e.preventDefault(); ih.clearFilters(); return; }
+  if (e.target.closest('a')) { return; }
+  var row = e.target.closest('tr.ih-row');
+  if (row) { ih.toggleRow(row.getAttribute('data-ih-id')); }
+});
+document.addEventListener('change', function (e) {
+  if (e.target.id === 'ih-project' || e.target.id === 'ih-severity') { ih.refreshList(); }
+});
+document.addEventListener('input', function (e) {
+  if (e.target.id === 'ih-q') { ih.announceList = true; ih.reloadDetails = false; }
+});
+document.body.addEventListener('htmx:afterSwap', function (e) {
+  if (e.detail.target.id !== 'ih-attention') { return; }
+  // a loading or error response has no rows: open rows stay open (and
+  // their details saved) until the list is back
+  if (!e.detail.target.querySelector('[data-ih-nodata]')) {
+    ih.reopenRows(ih.reloadDetails);
+  }
+  ih.reloadDetails = true;
+  if (!ih.announceList) { return; }
+  var announce = e.detail.target.querySelector('[data-ih-announce]');
+  // a loading response retries itself: announce the final outcome too
+  if (announce && announce.hasAttribute('data-ih-loading')) { return; }
+  ih.announceList = false;
+  if (announce) { ih.announce(announce.textContent.trim()); }
+});
+// htmx keeps the old content when a request fails (5xx, network error):
+// say so in the section, until its next successful swap replaces it
+ih.markNotRefreshed = function (target, text) {
+  var note = target.querySelector(':scope > .ih-not-refreshed');
+  if (!note) {
+    note = document.createElement('p');
+    note.className = 'text-warning ih-not-refreshed';
+    note.style.margin = '6px 0';
+    target.insertBefore(note, target.firstChild);
+  }
+  note.textContent = '';
+  var icon = document.createElement('i');
+  icon.className = 'fa fa-exclamation-triangle';
+  icon.setAttribute('aria-hidden', 'true');
+  note.appendChild(icon);
+  note.appendChild(document.createTextNode(' ' + text));
+};
+['htmx:sendError', 'htmx:responseError'].forEach(function (name) {
+  document.body.addEventListener(name, function (e) {
+    // expired session: Horizon answers 401 to AJAX requests
+    if (e.detail.xhr && e.detail.xhr.status === 401) { window.location.reload(); return; }
+    var target = e.detail.target;
+    if (!target || !target.closest || !target.closest('#ih-root')) { return; }
+    // a section still loading, or showing an error, has no data to keep
+    // (its own content only: closed rows hold a hidden spinner each)
+    var empty = target.querySelector(':scope > .ih-loading, :scope > [data-ih-nodata], :scope > .panel-body > [data-ih-nodata]');
+    ih.markNotRefreshed(target, empty ? ih.text.notLoaded : ih.text.notRefreshed);
+    if (target.id === 'ih-attention' && ih.announceList) {
+      ih.announceList = false;
+      ih.announce(empty ? ih.text.notLoaded : ih.text.notRefreshed);
+    }
+  });
+});
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible') { htmx.trigger(document.body, 'ih-refresh'); }
+});
+</script>
+
+{% for message in error_messages %}
+<div class="alert alert-danger"><i class="fa fa-exclamation-circle" aria-hidden="true"></i> {{ message }}</div>
+{% endfor %}
+
+<div id="ih-root" hx-headers='{"X-Requested-With": "XMLHttpRequest"}'>
+<!-- Shared request parameters for the partials -->
+<form id="ih-controls" onsubmit="return false;">
+  <input type="hidden" name="range" id="ih-range" value="{{ default_range }}">
+  <input type="hidden" name="symptom" id="ih-symptom" value="">
+  <input type="hidden" name="state" id="ih-state" value="">
+</form>
+
+<div class="row ih-toolbar">
+  <div class="col-sm-7">
+    <div class="btn-group btn-group-sm" role="group" aria-label="{% trans 'Time range' %}" id="ih-range-buttons">
+      {% for range in ranges %}
+      <button type="button" class="btn btn-default{% if range == default_range %} active{% endif %}"
+              data-range="{{ range }}" aria-pressed="{% if range == default_range %}true{% else %}false{% endif %}"
+              onclick="ih.setRange('{{ range }}')">{{ range }}</button>
+      {% endfor %}
+    </div>
+    <span class="ih-muted" style="margin-left: 8px;">{% blocktrans with window=rate_window %}Range for the trend charts. Symptoms always use the last {{ window }}.{% endblocktrans %}</span>
+  </div>
+  <div class="col-sm-5 text-right ih-muted" style="line-height: 30px;">
+    <i class="fa fa-refresh" aria-hidden="true"></i>
+    {% blocktrans with seconds=refresh_seconds %}Refreshes every {{ seconds }}s{% endblocktrans %}
+  </div>
+</div>
+
+<!-- 1-3. Summary cards, instance states and symptom tiles -->
+<div id="ih-summary" class="ih-section"
+     hx-get="{% url 'horizon:admin:instance_health:summary' %}"
+     hx-include="#ih-controls"
+     hx-trigger="load, every {{ refresh_seconds }}s [document.visibilityState === 'visible'], ih-refresh from:body, ih-filter from:body, ih-retry"
+     hx-sync="this:replace"
+     hx-swap="innerHTML">
+  <div class="ih-loading"><i class="fa fa-spinner fa-spin" aria-hidden="true"></i> {% trans "Loading…" %}</div>
+</div>
+
+<!-- 4. Instances needing attention -->
+<div class="panel panel-default ih-section">
+  <div class="panel-heading">
+    <h3 class="panel-title"><i class="fa fa-bell" aria-hidden="true"></i> {% trans "Instances needing attention" %}
+      <small class="text-muted">{% blocktrans with n=list_limit %}(max {{ n }}){% endblocktrans %}</small></h3>
+  </div>
+  <div class="panel-body ih-filters" style="padding-bottom: 5px;">
+    <label for="ih-q" style="margin-right: 4px;">{% trans "Instance" %}</label>
+    <input type="search" class="form-control input-sm" id="ih-q" name="q"
+           placeholder="{% trans 'name or ID' %}" style="width: 220px;" autocomplete="off" spellcheck="false"
+           hx-get="{% url 'horizon:admin:instance_health:attention' %}" hx-include="#ih-controls, #ih-q, #ih-severity, #ih-project"
+           hx-target="#ih-attention" hx-trigger="input changed delay:300ms, search" hx-sync="#ih-attention:replace">
+    <label class="sr-only" for="ih-project">{% trans "Project" %}</label>
+    <select class="form-control input-sm" id="ih-project" name="project">
+      <option value="">{% trans "All projects" %}</option>
+    </select>
+    <label class="sr-only" for="ih-severity">{% trans "Severity" %}</label>
+    <select class="form-control input-sm" id="ih-severity" name="severity">
+      <option value="0">{% trans "All severities" %}</option>
+      <option value="3">{% trans "Critical only" %}</option>
+      <option value="2">{% trans "Warning and above" %}</option>
+    </select>
+    <span class="ih-muted">{% trans "Click a row for the trends of each symptom." %}</span>
+    <p id="ih-status" class="sr-only" aria-live="polite"></p>
+  </div>
+  <div id="ih-attention"
+       hx-get="{% url 'horizon:admin:instance_health:attention' %}"
+       hx-include="#ih-controls, #ih-q, #ih-severity, #ih-project"
+       hx-trigger="load, every {{ refresh_seconds }}s [document.visibilityState === 'visible'], ih-refresh from:body, ih-filter from:body, ih-range from:body, ih-retry"
+       hx-sync="this:replace"
+       hx-swap="innerHTML">
+    <div class="ih-loading"><i class="fa fa-spinner fa-spin" aria-hidden="true"></i> {% trans "Loading…" %}</div>
+  </div>
+</div>
+
+{% if thresholds %}
+{# A native disclosure: keyboard and screen reader support without script. #}
+<details class="panel panel-default ih-section ih-how" id="ih-how">
+  <summary class="panel-heading"><h3 class="panel-title"><i class="fa fa-sliders" aria-hidden="true"></i> {% trans "How this page is calculated" %} <small class="text-muted">{% trans "(click to expand)" %}</small></h3></summary>
+  <div class="panel-body">
+    <table class="ih-rules ih-muted" style="color: #333;">
+      <tr><th scope="col">{% trans "Item" %}</th><th scope="col">{% trans "Measure" %}</th><th scope="col">{% trans "Warning above" %}</th><th scope="col">{% trans "Critical above" %}</th></tr>
+      <tr><th scope="row">{% trans "Instances by state" %}</th><td>{% blocktrans count minutes=inventory_minutes %}Compute API, server list of all projects (status, power state, task state), refreshed every {{ minutes }} minute: state changes can show up to that late.{% plural %}Compute API, server list of all projects (status, power state, task state), refreshed every {{ minutes }} minutes: state changes can show up to that late.{% endblocktrans %}</td><td colspan="2">{% trans "Fixed set of states" %}</td></tr>
+      <tr><th scope="row">{% trans "Cards" %}</th><td>{% blocktrans with window=stale_after %}Counts over all instances; "reporting metrics" = a cpu sample in the last {{ window }}.{% endblocktrans %}</td><td colspan="2">{% trans "Card colour from the worst issue" %}</td></tr>
+      <tr><th scope="row">{% trans "Attention list" %}</th><td>{% blocktrans with n=store_limit %}Instances with at least one issue, worst first, then by how far past the threshold. The {{ n }} worst can be filtered.{% endblocktrans %}</td><td colspan="2">{% blocktrans with n=list_limit %}At most {{ n }} rows; the filters narrow it down{% endblocktrans %}</td></tr>
+      <tr><th scope="row">{% trans "CPU contention" %}</th><td>{% trans "Share of vCPU time spent waiting for a host CPU" %} (<code>cpu.delay</code> ÷ <code>vcpus</code>)</td><td>{{ thresholds.cpu_wait_warning }}%</td><td>{{ thresholds.cpu_wait_critical }}%</td></tr>
+      <tr><th scope="row">{% trans "Memory pressure" %}</th><td>{% trans "Guest swap in + out" %} (<code>memory.swap.in</code>, <code>memory.swap.out</code>)</td><td>{{ thresholds.swap_warning }} MiB/s</td><td>{{ thresholds.swap_critical }} MiB/s</td></tr>
+      <tr><th scope="row">{% trans "Slow disk" %}</th><td>{% trans "Average time per request on the worst disk" %} (<code>disk.device.*.latency</code> ÷ <code>disk.device.*.requests</code>)</td><td>{{ thresholds.disk_latency_warning }} ms</td><td>{{ thresholds.disk_latency_critical }} ms</td></tr>
+      <tr><th scope="row">{% trans "Network drops/errors" %}</th><td>{% trans "Dropped and failed packets on all interfaces" %} (<code>network.*.packets.drop</code>, <code>.error</code>)</td><td>{{ thresholds.packet_loss_warning }} pkt/s</td><td>{{ thresholds.packet_loss_critical }} pkt/s</td></tr>
+      <tr><th scope="row">{% trans "State problems" %}</th><td>{% trans "Compute API status and power state" %}</td>
+        <td>{% blocktrans with minutes=thresholds.stuck_task_minutes %}Active but not running | in the same task for more than {{ minutes }} min{% endblocktrans %}</td>
+        <td>{% trans "Error | crashed" %}</td></tr>
+      <tr><th scope="row">{% trans "No telemetry" %}</th><td>{% blocktrans with window=stale_after %}Running in the Compute API, started (or last updated in Nova) more than {{ window }} ago, but no cpu sample in the last {{ window }}{% endblocktrans %}</td><td>{% trans "always" %}</td><td>—</td></tr>
+      <tr><th scope="row">{% trans "Sources" %}</th><td colspan="3">{% trans "The Compute API (instance states, hosts), Keystone (project names) and the Ceilometer instance meters through Prometheus and Aetos (symptoms)." %}</td></tr>
+    </table>
+    <p class="ih-muted" style="margin: 8px 0 0;">
+      {% blocktrans with window=rate_window %}Rates are computed over the last {{ window }}. Shut off, paused, suspended and shelved instances are not flagged: they may be stopped on purpose.{% endblocktrans %}
+      {% blocktrans %}Thresholds can be changed in <code>local_settings</code> with <code>GRIAN_PLUGIN['instance_health_thresholds']</code>, the rate window with <code>GRIAN_PLUGIN['instance_health_rate_window']</code> (at least twice the polling interval; it also lengthens the No telemetry window).{% endblocktrans %}
+    </p>
+  </div>
+</details>
+{% endif %}
+
+</div>
+
+{% endblock %}

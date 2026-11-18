@@ -1,0 +1,119 @@
+{% load i18n %}
+{# What a screen reader hears after the user changes a filter. #}
+<span hidden data-ih-announce{% if loading or partial_loading %} data-ih-loading{% endif %}>{% if error_message %}{{ error_message }}{% else %}{{ announce }}{% endif %}</span>
+{% if error_message %}
+<div class="panel-body"><div data-ih-nodata class="alert {% if loading %}alert-info{% else %}alert-danger{% endif %}" style="margin: 0;"><i class="fa {% if loading %}fa-spinner fa-spin{% else %}fa-exclamation-circle{% endif %}" aria-hidden="true"></i> {{ error_message }}</div></div>
+{% include "admin/instance_health/_retry.html" %}
+<script>ih.sparks.forEach(function (c) { c.destroy(); }); ih.sparks = [];</script>
+{% else %}
+{# Options of the project filter (outside this partial, so it keeps focus and stays open); updated in place when they change. Not on errors: the selected project is kept. #}
+{% with options_id="ih-project-options-"|add:uid %}{{ project_options|json_script:options_id }}{% endwith %}
+<script>ih.updateProjects('ih-project-options-{{ uid }}');</script>
+{# a source is still computed: reload this list shortly #}
+{% if partial_loading %}{% include "admin/instance_health/_retry.html" with loading=True %}{% endif %}
+{% if filters.symptom or filters.state or filters.project or filters.q or filters.severity %}
+<div class="panel-body" style="padding-top: 0; padding-bottom: 8px;">
+  <span class="ih-muted"><i class="fa fa-filter" aria-hidden="true"></i>
+    {% if from_nova %}{% blocktrans with state=state_label %}All instances in state <strong>{{ state }}</strong>{% endblocktrans %}{% elif filters.state %}{% blocktrans with state=state_label %}Instances needing attention in state <strong>{{ state }}</strong>{% endblocktrans %}{% elif filters.symptom %}{% blocktrans with symptom=symptom_label %}Symptom: <strong>{{ symptom }}</strong>{% endblocktrans %}{% else %}{% trans "Filtered" %}{% endif %}
+    | <button type="button" class="btn btn-link btn-xs ih-clear" id="ih-clear" data-ih-clear>{% trans "Clear filters" %}</button></span>
+</div>
+{% endif %}
+<div class="table-responsive">
+  <table class="table table-hover ih-table" style="margin-bottom: 0;">
+    <thead>
+      <tr>
+        <th style="width: 24px;"><span class="sr-only">{% trans "Details" %}</span></th>
+        <th>{% trans "Severity" %}</th>
+        <th>{% trans "Instance" %}</th>
+        <th>{% trans "Project" %}</th>
+        <th>{% trans "Host" %}</th>
+        <th>{% trans "Status" %}</th>
+        <th>{% trans "Issues" %}</th>
+        <th>{% trans "Worst symptom" %} <span class="ih-muted">(<span class="ih-range-label">{{ range_key }}</span>)</span></th>
+        <th class="text-right">{% trans "Last sample" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr class="ih-row{% if row.severity_key == 'critical' %} danger{% elif row.severity_key == 'warning' %} warning{% endif %}" data-ih-id="{{ row.id }}">
+        <td><button type="button" id="ih-toggle-{{ row.id }}" class="btn btn-link btn-xs ih-toggle" aria-expanded="false"
+                    aria-label="{% blocktrans with name=row.name|default:row.id %}Show details of {{ name }}{% endblocktrans %}"
+                    onclick="event.stopPropagation(); ih.toggleRow('{{ row.id }}');"><i class="fa fa-caret-right" aria-hidden="true"></i></button></td>
+        <td>
+          {% if row.severity_key == 'critical' %}<span class="label label-danger"><i class="fa fa-exclamation-circle" aria-hidden="true"></i> {% trans "Critical" %}</span>
+          {% elif row.severity_key == 'warning' %}<span class="label label-warning"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Warning" %}</span>
+          {% else %}<span class="label label-success"><i class="fa fa-check-circle" aria-hidden="true"></i> {% trans "OK" %}</span>{% endif %}
+        </td>
+        <td>
+          {% if row.url %}<a href="{{ row.url }}" id="ih-link-{{ row.id }}" title="{% trans 'Open in Admin > Instances' %}"><strong>{{ row.name|default:row.id }}</strong></a>{% else %}<strong>{{ row.name|default:row.id }}</strong>{% endif %}
+          <br><small class="text-muted" title="{{ row.id }}">{{ row.id|truncatechars:13 }}</small>
+        </td>
+        <td>{% if row.project_name %}{{ row.project_name }}{% elif row.project_id %}<span title="{{ row.project_id }}">{{ row.project_id|truncatechars:13 }}</span>{% else %}<span class="text-muted">{% trans "n/a" %}</span>{% endif %}</td>
+        <td>{{ row.host|default_if_none:"" }}{% if not row.host %}<span class="text-muted">{% trans "n/a" %}</span>{% endif %}</td>
+        <td>
+          {% if row.state %}<span class="ih-sw ih-st-{{ row.state }}" aria-hidden="true"></span>{{ row.status }}{% if row.state == 'active_not_running' %} <small class="text-muted">{% trans "(not running)" %}</small>{% endif %}
+          {% if row.task_state %}<br><small class="text-muted">{% blocktrans with task=row.task_state %}task: {{ task }}{% endblocktrans %}</small>{% endif %}
+          {% else %}<span class="text-muted">{% trans "n/a" %}</span>{% endif %}
+        </td>
+        <td>{% for issue in row.issues %}<span class="ih-issue ih-issue-{% if issue.severity == 3 %}critical{% else %}warning{% endif %}">{{ issue.text }}</span>{% empty %}<span class="text-muted">—</span>{% endfor %}</td>
+        <td>{% if row.trend_symptom %}<canvas class="ih-spark" data-ih-spark="{{ row.id }}" data-ih-level="{{ row.severity_key }}" width="110" height="28" role="img" aria-label="{{ row.trend_label }}"></canvas>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+        <td class="text-right">{% if row.last_seen_age %}<span class="{% if row.silent %}text-danger{% else %}text-muted{% endif %}">{{ row.last_seen_age }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      </tr>
+      <tr class="ih-detail hidden" data-ih-detail="{{ row.id }}">
+        <td></td>
+        <td colspan="8"><div data-ih-detail-body="{{ row.id }}" hx-sync="this:queue last"><div class="ih-loading"><i class="fa fa-spinner fa-spin" aria-hidden="true"></i> {% trans "Loading…" %}</div></div></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9" class="text-center text-muted" style="padding: 20px;">
+        {% if nova_list_failed %}
+        <span class="text-warning"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not list the instances in this state from the Compute API. It is tried again at the next refresh." %}</span>
+        {% elif filters.state or filters.symptom or filters.project or filters.q or filters.severity %}
+        <i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "No instances match these filters." %}
+        {% elif snapshot.nova_ok and snapshot.metrics_ok %}
+        <i class="fa fa-check-circle text-success" aria-hidden="true"></i> {% trans "No instances need attention." %}
+        {% elif snapshot.metrics_ok %}
+        <i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "No metric symptoms (instance states unavailable)." %}
+        {% elif snapshot.nova_ok %}
+        <i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "No instance state issues (metrics unavailable)." %}
+        {% endif %}
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="panel-footer ih-muted">
+  {% if data_stale %}<p class="text-warning" style="margin: 0 0 4px;"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not be refreshed: showing the last data received." %}</p>{% elif data_old %}<p style="margin: 0 0 4px;"><i class="fa fa-refresh" aria-hidden="true"></i> {% trans "Refreshing: the data shown may be a few minutes old." %}</p>{% endif %}
+  <i class="fa fa-info-circle" aria-hidden="true"></i>
+  {% if from_nova %}
+    {% trans "Instances in this state, by name, from the Compute API." %}
+    {% if total_exact and rows %}{% blocktrans with shown=rows|length count total=total %}Showing {{ shown }} of {{ total }} instance.{% plural %}Showing {{ shown }} of {{ total }} instances.{% endblocktrans %}{% elif rows %}{% blocktrans count shown=rows|length %}Showing the first {{ shown }} matching instance.{% plural %}Showing the first {{ shown }} matching instances.{% endblocktrans %}{% endif %}
+  {% else %}
+    {% trans "Instances with at least one issue, worst first." %}
+    {% blocktrans with shown=rows|length count total=total %}Showing {{ shown }} of {{ total }} matching instance.{% plural %}Showing {{ shown }} of {{ total }} matching instances.{% endblocktrans %}
+    {% if snapshot.truncated %}{% blocktrans with n=snapshot.rows|length total=snapshot.attention_total %}Only the {{ n }} worst of {{ total }} instances needing attention can be filtered.{% endblocktrans %}{% endif %}
+  {% endif %}
+  {% if total > list_limit or not total_exact and rows|length >= list_limit %}{% trans "Narrow the list with the filters above." %}{% endif %}
+</div>
+{% with data_id="ih-trends-"|add:uid %}{{ trends|json_script:data_id }}{% endwith %}
+<script>
+(function () {
+  ih.sparks.forEach(function (c) { c.destroy(); });
+  ih.sparks = [];
+  var trends = ih.readJson('ih-trends-{{ uid }}') || {};
+  document.querySelectorAll('#ih-attention canvas[data-ih-spark]').forEach(function (canvas) {
+    var data = trends[canvas.getAttribute('data-ih-spark')];
+    if (!data || !data.some(function (v) { return v !== null; })) { return; }
+    var level = canvas.getAttribute('data-ih-level');
+    ih.sparks.push(new Chart(canvas, {
+      type: 'line',
+      data: { labels: data.map(function () { return ''; }),
+        datasets: [{ data: data, spanGaps: false, borderWidth: 1.5, pointRadius: 0, tension: .3, fill: false,
+          borderColor: ih.colors[level] || ih.colors.info }] },
+      options: { responsive: false, animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: { x: { display: false }, y: { display: false, min: 0 } } }
+    }));
+  });
+})();
+</script>
+{% endif %}

@@ -199,3 +199,62 @@ class CacheMaxItemBytesTests(base.TestCase):
                 self._get,
                 cache_max_item_bytes=value,
             )
+
+
+class InstanceHealthConfigTests(base.TestCase):
+    def _plugin(self, **values):
+        return mock.patch(
+            "grian_ui.config._get_grian_plugin_config",
+            return_value=dict({"datasource": "fake"}, **values),
+        )
+
+    def test_threshold_defaults(self):
+        with self._plugin():
+            self.assertEqual(
+                config.get_instance_health_thresholds(),
+                config.DEFAULT_INSTANCE_HEALTH_THRESHOLDS,
+            )
+
+    def test_threshold_override(self):
+        with self._plugin(instance_health_thresholds={"swap_warning": 1}):
+            thresholds = config.get_instance_health_thresholds()
+        self.assertEqual(thresholds["swap_warning"], 1)
+        self.assertEqual(thresholds["swap_critical"], 10)
+
+    def test_threshold_order(self):
+        with self._plugin(instance_health_thresholds={"cpu_wait_warning": 50}):
+            self.assertRaises(
+                config.ConfigurationError,
+                config.get_instance_health_thresholds,
+            )
+
+    def test_rate_window(self):
+        with self._plugin():
+            self.assertEqual(config.get_instance_health_rate_window(), "10m")
+        for value in ("15m", "1h", "6h", "360m"):
+            with self._plugin(instance_health_rate_window=value):
+                self.assertEqual(
+                    config.get_instance_health_rate_window(), value
+                )
+
+    def test_invalid_rate_window(self):
+        for value in (
+            "0m",
+            "7h",
+            "361m",
+            "30s",
+            "10",
+            "1d",
+            10,
+            None,
+            "10m] or up[",
+            " 10m",
+            # "$" alone would accept a trailing newline
+            "10m\n",
+        ):
+            with self._plugin(instance_health_rate_window=value):
+                self.assertRaisesRegex(
+                    config.ConfigurationError,
+                    "instance_health_rate_window",
+                    config.get_instance_health_rate_window,
+                )

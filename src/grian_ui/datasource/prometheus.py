@@ -8,12 +8,16 @@ Provides access to Prometheus metrics through OpenStack observability service.
 
 import logging
 import math
+import re
 
 from keystoneauth1 import session
 from keystoneauth1.identity import v3
 from observabilityclient.utils import metric_utils as obs_client_utils
 
 from grian_ui import config
+from grian_ui import instance_health
+from grian_ui import inventory
+from grian_ui import timeseries
 from grian_ui.datasource.api import DatasourceClient
 
 
@@ -43,6 +47,130 @@ def number(value, ndigits=None):
     if math.isnan(result) or math.isinf(result):
         return None
     return result if ndigits is None else round(result, ndigits)
+
+
+# Instance metrics (Ceilometer compute agent, cumulative counters).
+INSTANCE_CPU_METRIC = "ceilometer_cpu"
+INSTANCE_METRICS = {
+    "cpu_delay": "ceilometer_cpu_delay",
+    "vcpus": "ceilometer_vcpus",
+    "swap": "ceilometer_memory_swap_(in|out)",
+    "disk_latency": "ceilometer_disk_device_(read|write)_latency",
+    "disk_requests": "ceilometer_disk_device_(read|write)_requests",
+    "packet_loss": "ceilometer_network_(incoming|outgoing)_packets_(drop|error)",
+}
+INSTANCE_ID_LABEL = "instance_id"
+_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_LAST_UUID_RE = re.compile(f".*({_UUID})")
+
+
+def instance_id_from_resource(resource):
+    """
+    Instance UUID of a resource label.
+
+    The resource is ``<uuid>`` (cpu, memory), ``<uuid>-<disk>`` (disks) or
+    ``<libvirt name>-<uuid>-<vnic>`` (interfaces): the last UUID is the
+    instance.
+    """
+    match = _LAST_UUID_RE.match(resource or "")
+    return match.group(1) if match else None
+
+
+def _with_instance_id(expr):
+    """Copy the instance UUID of the resource label into instance_id."""
+    return (
+        f'label_replace({expr}, "{INSTANCE_ID_LABEL}", "$1", "resource", '
+        f'".*({_UUID}).*")'
+    )
+
+
+def _instance_matchers(instance_ids):
+    """
+    Resource matchers for at most a page of instances.
+
+    Returns:
+        dict: kind -> matcher, for the "instance", "disk" and "interface"
+        resource formats, or None when no id is a valid UUID (so user
+        input can never change the structure of the query)
+    """
+    valid = sorted({i for i in instance_ids if inventory.is_instance_id(i)})
+    if not valid:
+        return None
+    ids = "|".join(valid)
+    return {
+        "instance": f'resource=~"{ids}"',
+        "disk": f'resource=~"({ids})-.+"',
+        "interface": f'resource=~".*({ids}).*"',
+    }
+
+
+def _sel(name, matcher=None):
+    parts = [f'__name__=~"{name}"']
+    if matcher:
+        parts.append(matcher)
+    return "{" + ", ".join(parts) + "}"
+
+
+def instance_symptom_expr(symptom, window, matchers=None, idle_zero=False):
+    """
+    PromQL for one symptom measure, one series per instance.
+
+    The disk measure is the worst device of each instance (use
+    :func:`disk_latency_by_device_expr` to know which device).
+    """
+    m = matchers or {}
+    by = f"sum by ({INSTANCE_ID_LABEL})"
+    if symptom == instance_health.CPU:
+        delay = _with_instance_id(
+            f"rate({_sel(INSTANCE_METRICS['cpu_delay'], m.get('instance'))}"
+            f"[{window}])"
+        )
+        vcpus = _with_instance_id(
+            f"last_over_time({_sel(INSTANCE_METRICS['vcpus'], m.get('instance'))}"
+            f"[{instance_health.silence_window(window)}])"
+        )
+        return (
+            f"100 * {by} ({delay}) / 1e9 / on ({INSTANCE_ID_LABEL}) "
+            f"max by ({INSTANCE_ID_LABEL}) ({vcpus})"
+        )
+    if symptom == instance_health.MEMORY:
+        return _per_instance_rate("swap", window, m.get("instance"))
+    if symptom == instance_health.NETWORK:
+        return _per_instance_rate("packet_loss", window, m.get("interface"))
+    if symptom == instance_health.DISK:
+        per_device = disk_latency_by_device_expr(
+            window, m.get("disk"), idle_zero
+        )
+        return (
+            f"max by ({INSTANCE_ID_LABEL}) ({_with_instance_id(per_device)})"
+        )
+    raise ValueError(f"not a metric symptom: {symptom}")
+
+
+def _per_instance_rate(metric, window, matcher):
+    rate = _with_instance_id(
+        f"rate({_sel(INSTANCE_METRICS[metric], matcher)}[{window}])"
+    )
+    return f"sum by ({INSTANCE_ID_LABEL}) ({rate})"
+
+
+def disk_latency_by_device_expr(window, matcher=None, idle_zero=False):
+    """
+    Average ms per request (reads and writes) of each instance disk.
+
+    A disk without requests has no latency (0/0, dropped as NaN); with
+    ``idle_zero`` (charts) it reads 0 ms instead, so an idle disk is not
+    drawn like a missing one.
+    """
+    latency = _sel(INSTANCE_METRICS["disk_latency"], matcher)
+    requests = _sel(INSTANCE_METRICS["disk_requests"], matcher)
+    rate = f"sum by (resource) (rate({requests}[{window}]))"
+    if idle_zero:
+        return (
+            f"(sum by (resource) (rate({latency}[{window}])) "
+            f"/ ({rate} > 0) / 1e6) or (0 * {rate})"
+        )
+    return f"sum by (resource) (rate({latency}[{window}])) / {rate} / 1e6"
 
 
 class PrometheusTelemetryClient(DatasourceClient):
@@ -351,6 +479,126 @@ class PrometheusTelemetryClient(DatasourceClient):
                     points.append([float(timestamp), sample])
             series.append((result.get("metric", {}), points))
         return series
+
+    def get_reporting_instances(self, window=None) -> dict:
+        """One query: every instance with a cpu sample in ``window``."""
+        query = (
+            "group by (resource, resource_name, project) "
+            f"(last_over_time({INSTANCE_CPU_METRIC}"
+            f"[{window or instance_health.STALE_AFTER}]))"
+        )
+        reporting = {}
+        for metric in self.client.query(query=query) or []:
+            instance_id = metric.labels.get("resource")
+            if not inventory.is_instance_id(instance_id):
+                continue
+            # resource_name is "<display name>:<libvirt name>"
+            name = metric.labels.get("resource_name") or ""
+            reporting[instance_id] = {
+                "name": name.rpartition(":")[0] or name or None,
+                "project_id": metric.labels.get("project"),
+            }
+        return reporting
+
+    def get_instance_symptoms(self, thresholds, rate_window) -> dict:
+        """
+        Four queries, each filtered server-side by the warning threshold.
+        """
+        symptoms = {}
+        for symptom in (
+            instance_health.CPU,
+            instance_health.MEMORY,
+            instance_health.NETWORK,
+        ):
+            prefix = instance_health.SYMPTOM_THRESHOLDS[symptom][0]
+            warning = thresholds[f"{prefix}_warning"]
+            query = (
+                f"({instance_symptom_expr(symptom, rate_window)}) > {warning}"
+            )
+            found = {}
+            for metric in self.client.query(query=query) or []:
+                instance_id = metric.labels.get(INSTANCE_ID_LABEL)
+                value = number(metric.value)
+                # IDs end up in the page (and in queries): UUIDs only
+                if inventory.is_instance_id(instance_id) and value is not None:
+                    found[instance_id] = value
+            symptoms[symptom] = found
+
+        warning = thresholds["disk_latency_warning"]
+        query = f"({disk_latency_by_device_expr(rate_window)}) > {warning}"
+        disks = {}
+        for metric in self.client.query(query=query) or []:
+            resource = metric.labels.get("resource", "")
+            instance_id = instance_id_from_resource(resource)
+            value = number(metric.value)
+            if instance_id is None or value is None:
+                continue
+            if value > disks.get(instance_id, {}).get("value", -1):
+                device = resource.rpartition(instance_id)[2].lstrip("-")
+                disks[instance_id] = {"value": value, "device": device or None}
+        symptoms[instance_health.DISK] = disks
+        return symptoms
+
+    def get_instance_last_seen(self, instance_ids) -> dict:
+        """One query for at most a page of instances."""
+        matchers = _instance_matchers(instance_ids)
+        if matchers is None:
+            return {}
+        query = (
+            "max by (resource) (max_over_time(timestamp("
+            f"{_sel(INSTANCE_CPU_METRIC, matchers['instance'])})"
+            f"[{instance_health.LAST_SEEN_LOOKBACK}:1m]))"
+        )
+        last_seen = {}
+        for metric in self.client.query(query=query) or []:
+            value = number(metric.value)
+            if value is not None:
+                last_seen[metric.labels.get("resource")] = value
+        return last_seen
+
+    def get_instance_trends(
+        self, instance_id, range_key, rate_window, at=None
+    ) -> dict:
+        """One query returning the four measures of one instance."""
+        trends = {s: [] for s in instance_health.METRIC_SYMPTOMS}
+        matchers = _instance_matchers([instance_id])
+        if matchers is None:
+            return trends
+        _key, window, step = timeseries.get_range(range_key)
+        # charts: an idle disk reads 0 ms, not a gap
+        union = " or ".join(
+            "label_replace("
+            + instance_symptom_expr(s, rate_window, matchers, idle_zero=True)
+            + f', "field", "{s}", "", "")'
+            for s in instance_health.METRIC_SYMPTOMS
+        )
+        for labels, points in self.query_matrix(
+            f"({union})[{window}:{step}]", ndigits=2, time=at
+        ):
+            field = labels.get("field")
+            if field in trends:
+                trends[field] = points
+        return trends
+
+    def get_symptom_trends(
+        self, symptom, instance_ids, range_key, rate_window, at=None
+    ) -> dict:
+        """One query for at most a page of instances."""
+        matchers = _instance_matchers(instance_ids)
+        if matchers is None or symptom not in instance_health.METRIC_SYMPTOMS:
+            return {}
+        _key, window, step = timeseries.get_range(range_key)
+        expr = instance_symptom_expr(
+            symptom, rate_window, matchers, idle_zero=True
+        )
+        trends = {}
+        for labels, points in self.query_matrix(
+            f"({expr})[{window}:{step}]", ndigits=2, time=at
+        ):
+            instance_id = labels.get(INSTANCE_ID_LABEL)
+            if instance_id:
+                trends[instance_id] = points
+        return trends
 
 
 def get_client(request) -> DatasourceClient:

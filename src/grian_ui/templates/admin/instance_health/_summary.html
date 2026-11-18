@@ -1,0 +1,134 @@
+{% load i18n %}
+{% if error_message %}
+<div data-ih-nodata class="alert {% if loading %}alert-info{% else %}alert-danger{% endif %}"><i class="fa {% if loading %}fa-spinner fa-spin{% else %}fa-exclamation-circle{% endif %}" aria-hidden="true"></i> {{ error_message }}</div>
+{% include "admin/instance_health/_retry.html" %}
+{% else %}
+{% if data_stale %}
+<div class="alert alert-warning"><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not be refreshed: showing the last data received." %}</div>
+{% elif data_old %}
+<div class="alert alert-info"><i class="fa fa-refresh" aria-hidden="true"></i> {% trans "Refreshing: the data shown may be a few minutes old." %}</div>
+{% endif %}
+{% if not snapshot.nova_ok and 'inventory' in partial_loading %}
+<div class="alert alert-info"><i class="fa fa-spinner fa-spin" aria-hidden="true"></i>
+  {% trans "Loading the instance list from the Compute API… Showing the metric symptoms meanwhile." %}</div>
+{% elif not snapshot.metrics_ok and 'metrics' in partial_loading %}
+<div class="alert alert-info"><i class="fa fa-spinner fa-spin" aria-hidden="true"></i>
+  {% trans "Loading the instance metrics… Showing the instance states meanwhile." %}</div>
+{% elif not snapshot.nova_ok %}
+<div class="alert alert-warning">
+  <strong><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not reach the Compute API." %}</strong>
+  {% trans "Showing metric symptoms only: stopped and errored instances, hosts and instance states are missing." %}
+</div>
+{% elif not snapshot.metrics_ok %}
+<div class="alert alert-warning">
+  <strong><i class="fa fa-exclamation-triangle" aria-hidden="true"></i> {% trans "Could not load the instance metrics." %}</strong>
+  {% trans "Showing instance states from the Compute API only: CPU, memory, disk, network and telemetry symptoms are unavailable." %}
+</div>
+{% endif %}
+{% if partial_loading %}{% include "admin/instance_health/_retry.html" with loading=True %}{% endif %}
+
+<div class="row ih-cards">
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel ih-card {% if snapshot.critical %}ih-crit{% elif snapshot.warning %}ih-warn{% elif snapshot.nova_ok and snapshot.metrics_ok %}ih-ok{% else %}ih-unknown{% endif %}">
+      <div class="panel-heading">
+        <i class="fa {% if snapshot.attention_total %}fa-exclamation-triangle{% elif snapshot.nova_ok and snapshot.metrics_ok %}fa-check-circle{% else %}fa-question-circle{% endif %} ih-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="ih-value">{{ snapshot.attention_total }}</div>
+          <div class="ih-label">{% trans "Instances needing attention" %}</div>
+          <div class="ih-sub">{% blocktrans with c=snapshot.critical w=snapshot.warning %}{{ c }} critical | {{ w }} warning{% endblocktrans %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel ih-card {% if snapshot.nova_ok %}ih-info{% else %}ih-unknown{% endif %}">
+      <div class="panel-heading">
+        <i class="fa fa-desktop ih-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="ih-value">{% if snapshot.nova_ok %}{{ snapshot.total }}{% else %}?{% endif %}</div>
+          <div class="ih-label">{% trans "Instances (all projects)" %}</div>
+          <div class="ih-sub">{% if snapshot.nova_ok %}{% blocktrans count n=snapshot.running %}{{ n }} running{% plural %}{{ n }} running{% endblocktrans %}{% else %}{% trans "Compute API unavailable" %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel ih-card {% if not snapshot.metrics_ok %}ih-unknown{% elif not_reporting %}ih-warn{% else %}ih-ok{% endif %}"
+         title="{% blocktrans with window=stale_after %}Running instances with a cpu sample in the last {{ window }}{% endblocktrans %}">
+      <div class="panel-heading">
+        <i class="fa fa-line-chart ih-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="ih-value">{% if snapshot.metrics_ok %}{{ snapshot.reporting }}{% if snapshot.nova_ok %}<small> / {{ snapshot.running }}</small>{% endif %}{% else %}?{% endif %}</div>
+          <div class="ih-label">{% trans "Reporting metrics" %}</div>
+          <div class="ih-sub">{% if not snapshot.metrics_ok %}{% trans "metrics unavailable" %}{% elif not_reporting %}{% blocktrans count n=not_reporting %}{{ n }} not reporting{% plural %}{{ n }} not reporting{% endblocktrans %}{% elif starting %}{% blocktrans count n=starting %}{{ n }} just started{% plural %}{{ n }} just started{% endblocktrans %}{% elif snapshot.nova_ok %}{% trans "all running instances" %}{% else %}{% trans "reporting instances" %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel ih-card {% if not snapshot.nova_ok %}ih-unknown{% elif snapshot.hosts_affected %}ih-warn{% else %}ih-ok{% endif %}">
+      <div class="panel-heading">
+        <i class="fa fa-server ih-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="ih-value">{% if snapshot.nova_ok %}{{ snapshot.hosts_affected }}{% else %}?{% endif %}</div>
+          <div class="ih-label">{% trans "Compute hosts affected" %}</div>
+          <div class="ih-sub">{% if snapshot.nova_ok %}{% trans "with an instance needing attention" %}{% else %}{% trans "Compute API unavailable" %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if snapshot.nova_ok %}
+<div class="panel panel-default">
+  <div class="panel-heading"><h3 class="panel-title"><i class="fa fa-tasks" aria-hidden="true"></i> {% trans "Instances by state" %}</h3></div>
+  <div class="panel-body">
+    {% if snapshot.total %}
+    <div class="ih-state-bar" role="group" aria-label="{% trans 'Instances by state' %}">
+      {% for seg in segments %}{% if seg.count %}
+      {% if seg.listable %}
+      <button type="button" id="ih-seg-{{ seg.key }}" class="ih-seg ih-st-{{ seg.key }}{% if filters.state and not seg.active %} ih-dim{% endif %}" style="flex: {{ seg.count }};"
+              data-ih-state="{{ seg.key }}" aria-pressed="{% if seg.active %}true{% else %}false{% endif %}"
+              title="{{ seg.label }}: {{ seg.count }} ({{ seg.percent }}%)"><span class="sr-only">{{ seg.label }}: {{ seg.count }}</span></button>
+      {% else %}
+      <div class="ih-seg ih-st-{{ seg.key }}{% if filters.state %} ih-dim{% endif %}" style="flex: {{ seg.count }};" title="{{ seg.label }}: {{ seg.count }} ({{ seg.percent }}%)"></div>
+      {% endif %}
+      {% endif %}{% endfor %}
+    </div>
+    <div class="ih-state-legend">
+      {% for seg in segments %}
+      {% if seg.listable and seg.count %}
+      <button type="button" id="ih-legend-{{ seg.key }}" class="btn btn-link btn-sm{% if filters.state and not seg.active %} ih-dim{% endif %}" data-ih-state="{{ seg.key }}" aria-pressed="{% if seg.active %}true{% else %}false{% endif %}">
+        <span class="ih-sw ih-st-{{ seg.key }}" aria-hidden="true"></span>{% if seg.active %}<strong><u>{{ seg.label }}</u></strong>{% else %}{{ seg.label }}{% endif %} <strong>{{ seg.count }}</strong></button>
+      {% else %}
+      <span class="{% if not seg.count %}ih-dim{% endif %}" style="line-height: 30px;"><span class="ih-sw ih-st-{{ seg.key }}" aria-hidden="true"></span>{{ seg.label }} <strong>{{ seg.count }}</strong></span>
+      {% endif %}
+      {% endfor %}
+    </div>
+    <p class="ih-muted" style="margin: 8px 0 0;">{% trans "From the Compute API, all projects. Click a state to list its instances below." %}</p>
+    {% else %}
+    <p class="text-muted" style="margin: 0;"><i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "There are no instances in this cloud." %}</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="ih-symptoms" role="group" aria-label="{% trans 'Filter by symptom' %}">
+  {% for tile in tiles %}
+  <button type="button" id="ih-sym-{{ tile.key }}" class="ih-sym{% if tile.active %} active{% endif %}" data-ih-symptom="{{ tile.key }}"
+          aria-pressed="{% if tile.active %}true{% else %}false{% endif %}"
+          {% if not tile.available %}disabled title="{% if tile.loading %}{% trans 'Not available yet: its data is still loading' %}{% else %}{% trans 'Not available: a data source is unreachable' %}{% endif %}"{% endif %}>
+    <span class="ih-t"><i class="fa fa-{{ tile.icon }}" aria-hidden="true"></i> {{ tile.label }}</span>
+    <span class="ih-n {% if not tile.available or not tile.total %}text-muted{% elif tile.critical %}text-danger{% else %}text-warning{% endif %}">{% if tile.available %}{{ tile.total }}{% else %}–{% endif %}</span>
+    <span class="ih-d">{{ tile.help }}</span>
+    <span class="ih-split">{% if tile.available and tile.total %}{% if tile.critical %}<span class="text-danger">{% blocktrans with n=tile.critical %}{{ n }} critical{% endblocktrans %}</span> | {% endif %}{% blocktrans with n=tile.warning %}{{ n }} warning{% endblocktrans %}{% else %}&nbsp;{% endif %}</span>
+  </button>
+  {% endfor %}
+</div>
+<p class="ih-muted text-right" style="margin: 6px 0 0;">
+  {% if metrics_ts %}{% trans "Metrics from" %} <span class="ih-clock" data-ih-time="{{ metrics_ts }}"></span>{% endif %}
+  {% if metrics_ts and nova_ts %} | {% endif %}
+  {% if nova_ts %}{% blocktrans with at=nova_ts count minutes=inventory_minutes %}Instance list from <span class="ih-clock" data-ih-time="{{ at }}"></span> (refreshed every {{ minutes }} minute){% plural %}Instance list from <span class="ih-clock" data-ih-time="{{ at }}"></span> (refreshed every {{ minutes }} minutes){% endblocktrans %}{% endif %}
+</p>
+<script>ih.showClocks(document.getElementById('ih-summary'));</script>
+{% endif %}

@@ -16,3 +16,4 @@ documentation for details.
    :caption: Contents:
 
    admin-volume-metrics
+   admin-instance-health
