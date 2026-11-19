@@ -1,0 +1,43 @@
+{% load i18n %}
+{% if error_message %}
+<div class="panel-body">{% include "admin/provisioning/_error.html" %}</div>
+{% else %}
+<div class="table-responsive">
+  <table class="table table-striped prov-table" style="margin-bottom: 0;">
+    <thead>
+      <tr>
+        <th scope="col">{% trans "Host" %}</th>
+        <th scope="col" class="text-right">{% trans "Boots" %}</th>
+        <th scope="col" class="text-right">{% trans "Median" %}</th>
+        <th scope="col" class="text-right">{% trans "Slowest" %}</th>
+        <th scope="col" class="text-right">{% blocktrans with window=status_window %}Last {{ window }} median{% endblocktrans %}</th>
+        <th scope="col">{% blocktrans with window=status_window %}vs cloud, {{ window }}{% endblocktrans %}</th>
+        <th scope="col">{% trans "Status" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr{% if row.status == 'slow' %} class="danger"{% elif row.status == 'slower' %} class="warning"{% endif %}>
+        <th scope="row">{% include "admin/provisioning/_host.html" with name=row.name link=row.link %}</th>
+        <td class="text-right">{{ row.boots }}</td>
+        <td class="text-right">{{ row.median|floatformat:1 }} s</td>
+        <td class="text-right">{{ row.slowest|floatformat:1 }} s</td>
+        <td class="text-right">{% if row.boots_24h %}{{ row.median_24h|floatformat:1 }} s <small class="text-muted">({{ row.boots_24h }})</small>{% else %}<span class="text-muted">–</span>{% endif %}</td>
+        <td>{% if row.ratio is None %}<span class="text-muted">–</span>{% else %}<span class="prov-ratio{% if row.status == 'slow' %} prov-crit{% elif row.status == 'slower' %} prov-warn{% endif %}" aria-hidden="true"><span style="width: {{ row.ratio_width }}%;"></span></span>{{ row.ratio|floatformat:1 }}×{% endif %}</td>
+        <td>{% include "admin/provisioning/_status_badge.html" with status=row.status %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="text-center text-muted" style="padding: 20px;">{% trans "No boots in this range." %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="panel-footer prov-muted">
+  {% include "admin/provisioning/_notes.html" %}
+  <i class="fa fa-info-circle" aria-hidden="true"></i>
+  {% blocktrans count n=summary.hosts_total %}{{ n }} host booted instances in this range.{% plural %}{{ n }} hosts booted instances in this range.{% endblocktrans %}
+  {% if summary.hosts_total > top_limit %}{% blocktrans with shown=rows|length %}Showing the {{ shown }} slowest.{% endblocktrans %}{% endif %}
+  {% if summary.without_host %}{% blocktrans count n=summary.without_host %}{{ n }} boot has no host label.{% plural %}{{ n }} boots have no host label.{% endblocktrans %}{% endif %}
+  {% with first=summary.slow_hosts.0 %}{% if first %}<br><strong>{{ first.name }}</strong> {% blocktrans with ratio=first.ratio|floatformat:1 %}boots {{ ratio }}× slower than the cloud. Common causes: the image cache on the host, slow image downloads from the Image service, or a busy host (see Compute Host Health).{% endblocktrans %}{% endif %}{% endwith %}
+</div>
+{% endif %}

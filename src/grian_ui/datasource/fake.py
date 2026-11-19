@@ -99,6 +99,14 @@ class FakeTelemetryClient(DatasourceClient):
             },
         ]
 
+    # Provisioning --------------------------------------------------------
+
+    def get_provisioning_boots(self, range_key: str) -> list:
+        """Get sample boots (see grian_ui.datasource.fake_provisioning)."""
+        from grian_ui.datasource import fake_provisioning
+
+        return fake_provisioning.boots_in_range(range_key)
+
 
 def get_client(request=None) -> DatasourceClient:
     """

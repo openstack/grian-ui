@@ -11,11 +11,13 @@ Add each panel's URLs to ``PANELS``.
 from django.urls import include
 from django.urls import path
 
+from grian_ui.content.provisioning import urls as provisioning_urls
 from grian_ui.content.volume_metrics import urls as volume_metrics_urls
 
 
 PANELS = {
     "volume_metrics": volume_metrics_urls,
+    "provisioning": provisioning_urls,
 }
 
 admin = (

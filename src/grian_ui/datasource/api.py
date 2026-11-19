@@ -61,3 +61,14 @@ class DatasourceClient(ABC):
     def get_capacity_predictions(self) -> list:
         """Get capacity predictions for storage pools."""
         pass
+
+    @abstractmethod
+    def get_provisioning_boots(self, range_key: str) -> list:
+        """
+        Get the instance boots of a Provisioning range ("24h", "7d", ...).
+
+        Returns:
+            list: one dict per boot (``id``, ``name``, ``project_id``,
+            ``host``, ``seconds``, ``at``), see :mod:`grian_ui.provisioning`
+        """
+        pass

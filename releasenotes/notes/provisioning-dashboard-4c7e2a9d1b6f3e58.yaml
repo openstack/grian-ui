@@ -1,0 +1,13 @@
+---
+features:
+  - |
+    Add the Provisioning dashboard under Admin > Telemetry. It shows how long
+    instances take to boot, based on the Ceilometer
+    ``compute.instance.booting.time`` meter: summary cards, one dot per boot,
+    the compute hosts that boot slower than the cloud (judged on the last
+    24 hours), the slowest boots, and the failed builds read from the
+    Compute API (deleted instances are not counted). Host names link to the
+    Compute Host Health dashboard when it is enabled. Every panel renders a
+    bounded amount of data, and the Compute and Identity API data are
+    shared snapshots refreshed every 5 to 10 minutes per region. Thresholds
+    can be configured with ``GRIAN_PLUGIN['provisioning_thresholds']``.

@@ -1,0 +1,9 @@
+{# Shared data is still being computed by another request: reload this partial (only) shortly. #}
+{% if loading %}<span id="prov-retry-{{ uid }}" class="prov-retry" hidden></span>
+<script>setTimeout(function () {
+  // hidden tab: the page refreshes every section when it becomes visible
+  if (document.visibilityState !== 'visible') { return; }
+  var node = document.getElementById('prov-retry-{{ uid }}');
+  var target = node && node.closest('[hx-get]');
+  if (target) { htmx.trigger(target, 'prov-retry'); }
+}, 3000);</script>{% endif %}

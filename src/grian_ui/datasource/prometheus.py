@@ -352,6 +352,18 @@ class PrometheusTelemetryClient(DatasourceClient):
             series.append((result.get("metric", {}), points))
         return series
 
+    # Provisioning --------------------------------------------------------
+
+    def get_provisioning_boots(self, range_key: str) -> list:
+        """
+        Get the boots of a range: two queries, whatever the number of boots.
+
+        See grian_ui.datasource.prometheus_provisioning.
+        """
+        from grian_ui.datasource import prometheus_provisioning
+
+        return prometheus_provisioning.get_boots(self.client, range_key)
+
 
 def get_client(request) -> DatasourceClient:
     """

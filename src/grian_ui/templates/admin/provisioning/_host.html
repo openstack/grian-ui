@@ -1,0 +1,1 @@
+{% load i18n %}{% if not name %}–{% elif link %}<a href="{{ link.url }}" title="{% blocktrans with hypervisor=link.hypervisor %}Open {{ hypervisor }} in Compute Host Health{% endblocktrans %}">{{ name }}</a>{% else %}{{ name }}{% endif %}

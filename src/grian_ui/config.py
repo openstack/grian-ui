@@ -186,3 +186,39 @@ def get_openstack_keystone_url():
 def get_openstack_endpoint_type():
     """Get OpenStack endpoint type (interface) from settings."""
     return getattr(settings, "OPENSTACK_ENDPOINT_TYPE", "publicURL")
+
+
+#: Default provisioning thresholds. A host's median boot time over the last
+#: 24 hours divided by the cloud's makes it "Slower" (warning) or "Slow"
+#: (critical), given at least ``host_min_boots`` boots in those 24 hours.
+DEFAULT_PROVISIONING_THRESHOLDS = {
+    "host_ratio_warning": 1.5,
+    "host_ratio_critical": 2.0,
+    "host_min_boots": 3,
+    "median_seconds_warning": 30,
+    "failed_percent_critical": 5,
+}
+
+
+def get_provisioning_thresholds():
+    """
+    Get the provisioning dashboard thresholds.
+
+    Defaults (DEFAULT_PROVISIONING_THRESHOLDS) can be overridden per key
+    with ``GRIAN_PLUGIN['provisioning_thresholds']``. See get_thresholds();
+    ``host_min_boots`` must also be a whole number of at least 1.
+
+    Raises:
+        ConfigurationError: If an override is unknown or out of range
+    """
+    thresholds = get_thresholds(
+        "provisioning_thresholds", DEFAULT_PROVISIONING_THRESHOLDS
+    )
+    min_boots = thresholds["host_min_boots"]
+    if min_boots < 1 or min_boots != int(min_boots):
+        raise ConfigurationError(
+            "GRIAN_PLUGIN['provisioning_thresholds']['host_min_boots'] must "
+            f"be a whole number of at least 1, got {min_boots!r}"
+        )
+    thresholds["host_min_boots"] = int(min_boots)
+    return thresholds

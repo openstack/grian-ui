@@ -1,0 +1,27 @@
+{% load i18n %}
+{% if error_message %}
+<div class="panel-body">{% include "admin/provisioning/_error.html" %}</div>
+{% elif not rows %}
+<div class="prov-empty"><i class="fa fa-check-circle text-success" aria-hidden="true"></i>{% blocktrans with range=range_key %}No failed builds in the last {{ range }}.{% endblocktrans %}</div>
+<div class="panel-footer prov-muted">{% include "admin/provisioning/_notes.html" %}{% trans "Deleted instances are not counted." %}</div>
+{% else %}
+<table class="table prov-table" style="margin-bottom: 0;">
+  <caption class="sr-only">{% trans "Failed builds, newest first" %}</caption>
+  <thead class="sr-only"><tr><th scope="col">{% trans "Instance" %}</th><th scope="col">{% trans "Fault" %}</th></tr></thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><strong>{{ row.name|default:row.id }}</strong><br><small class="text-muted">{{ row.project|default:"–" }} | {{ row.flavor|default:"–" }} | {% with c=row.created_at %}<time class="prov-clock" datetime="{{ c.iso }}" data-prov-time="{{ c.ts }}" data-prov-minutes>{{ c.utc }}</time>{% endwith %}</small></td>
+      <td class="prov-fault">{{ row.fault|default:_("No fault recorded.") }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<div class="panel-footer prov-muted">
+  {% include "admin/provisioning/_notes.html" %}
+  {% if failed.count > failed_limit %}{% blocktrans with shown=rows|length total=failed.count %}Showing the newest {{ shown }} of {{ total }}.{% endblocktrans %}{% endif %}
+  {% if failed.truncated %}{% blocktrans with n=failed_query_limit %}There may be more: only the newest {{ n }} ERROR instances are read.{% endblocktrans %}{% endif %}
+  {% trans "Deleted instances are not counted." %}
+  {% if no_valid_host %}<i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "“No valid host” means the scheduler found no host with room for the flavor. Repeated, it is a capacity signal." %}{% endif %}
+</div>
+{% endif %}

@@ -1,0 +1,59 @@
+{% load i18n %}
+{% if error_message %}
+{% include "admin/provisioning/_error.html" %}
+<script>prov.destroyChart('boots');</script>
+{% elif not summary.boots %}
+<div class="prov-empty"><i class="fa fa-rocket" aria-hidden="true"></i>
+  <p>{% blocktrans with range=range_key %}No instance booted in the last {{ range }}.{% endblocktrans %}</p>
+  <p class="prov-muted">{% blocktrans %}Boot times come from <code>ceilometer_compute_instance_booting_time</code>, sent once per instance when its build ends. A quiet cloud has few boots.{% endblocktrans %}</p></div>
+<script>prov.destroyChart('boots');</script>
+{% else %}
+<div class="prov-legend" aria-hidden="true">
+  <span class="prov-sw prov-sw-dot" style="background: #337ab7; margin-left: 0;"></span>{% trans "Boot" %}
+  {% if chart.slow_hosts %}<span class="prov-sw prov-sw-tri"></span>{% blocktrans with hosts=chart.slow_hosts|join:", " %}Boot on a slow host ({{ hosts }}){% endblocktrans %}{% endif %}
+  <span class="prov-sw prov-sw-line"></span>{% blocktrans with median=summary.median|floatformat:1 %}Median of the range ({{ median }} s){% endblocktrans %}
+</div>
+<div class="prov-chart"><canvas id="prov-boots-canvas-{{ uid }}" role="img" aria-label="{% trans 'Boot times' %}" aria-describedby="prov-boots-summary-{{ uid }}"></canvas></div>
+<p class="sr-only" id="prov-boots-summary-{{ uid }}">{% blocktrans count n=summary.boots with median=summary.median|floatformat:1 slowest=summary.slowest_seconds|floatformat:1 %}{{ n }} boot, median {{ median }} seconds, slowest {{ slowest }} seconds. The slowest boots are listed in the table below.{% plural %}{{ n }} boots, median {{ median }} seconds, slowest {{ slowest }} seconds. The slowest boots are listed in the table below.{% endblocktrans %}</p>
+{% with data_id="prov-boots-data-"|add:uid %}{{ chart|json_script:data_id }}{% endwith %}
+<p class="prov-muted" style="margin: 8px 0 0;">{% trans "One dot per instance boot: seconds from the create request until the instance is running. Hover a dot for the instance and host." %}
+{% if summary.thinned %}<strong>{% blocktrans with total=summary.points_total shown=chart.points|length %}{{ total }} boots: thinned to {{ shown }} dots (boots on slow hosts are always shown); the cards and tables use all of them.{% endblocktrans %}</strong>{% endif %}</p>
+{% include "admin/provisioning/_notes.html" %}
+<script>
+(function () {
+  var d = prov.readJson('prov-boots-data-{{ uid }}');
+  var points = d.points.map(function (r) { return { x: r[0], y: r[1], n: r[2], p: r[3], h: r[4], s: r[5] }; });
+  var normal = points.filter(function (p) { return !p.s; });
+  var slow = points.filter(function (p) { return p.s; });
+  var datasets = [{ label: '{% filter escapejs %}{% trans "Boot" %}{% endfilter %}', data: normal,
+    backgroundColor: 'rgba(51,122,183,.6)', borderColor: '#fff', borderWidth: 1, pointRadius: d.points.length > 300 ? 3 : 5, pointHoverRadius: 7 }];
+  if (slow.length) {
+    datasets.push({ label: '{% filter escapejs %}{% trans "Boot on a slow host" %}{% endfilter %}', data: slow, pointStyle: 'triangle',
+      backgroundColor: prov.colors.slow, borderColor: '#fff', borderWidth: 1, pointRadius: 5, pointHoverRadius: 8 });
+  }
+  if (d.median !== null) {
+    datasets.push({ label: 'median', type: 'line', data: [{ x: d.start, y: d.median }, { x: d.end, y: d.median }],
+      borderColor: prov.colors.median, borderDash: [5, 4], borderWidth: 1, pointRadius: 0, pointHoverRadius: 0 });
+  }
+  prov.replaceChart('boots', document.getElementById('prov-boots-canvas-{{ uid }}'), {
+    type: 'scatter', data: { datasets: datasets },
+    options: {
+      maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: false },
+        tooltip: { filter: function (c) { return c.raw && c.raw.n !== undefined; },
+          callbacks: {
+            title: function (items) { return items.length ? prov.formatDateTime(items[0].raw.x) : ''; },
+            label: function (c) {
+              var p = c.raw;
+              return (p.n || '?') + (p.p ? ' (' + p.p + ')' : '') + (p.h ? ' {% filter escapejs %}{% trans "on" %}{% endfilter %} ' + p.h : '') + ': ' + p.y.toFixed(1) + ' s';
+            } } } },
+      scales: {
+        x: { type: 'linear', min: d.start, max: d.end, grid: { display: false },
+          ticks: { maxTicksLimit: 8, callback: function (v) { return prov.formatTime(v, d.range); } } },
+        y: { beginAtZero: true, title: { display: true, text: '{% filter escapejs %}{% trans "seconds" %}{% endfilter %}' }, grid: { color: '#f0f0f0' } }
+      }
+    }
+  });
+})();
+</script>
+{% endif %}

@@ -1,0 +1,39 @@
+{% load i18n %}
+{% if error_message %}
+<div class="panel-body">{% include "admin/provisioning/_error.html" %}</div>
+{% else %}
+<div class="table-responsive">
+  <table class="table table-striped prov-table" style="margin-bottom: 0;">
+    <thead>
+      <tr>
+        <th scope="col">{% trans "Instance" %}</th>
+        <th scope="col">{% trans "Project" %}</th>
+        <th scope="col">{% trans "Host" %}</th>
+        <th scope="col">{% trans "Flavor" %}</th>
+        <th scope="col" class="text-right">{% trans "Boot time" %}</th>
+        <th scope="col" class="text-right">{% trans "When" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <th scope="row">{{ row.name|default:row.id }}</th>
+        <td>{{ row.project|default:"–" }}</td>
+        <td>{% include "admin/provisioning/_host.html" with name=row.host link=row.link %}</td>
+        <td>{% if row.flavor %}{{ row.flavor }}{% else %}<span class="text-muted">–</span>{% endif %}</td>
+        <td class="text-right">{{ row.seconds|floatformat:1 }} s</td>
+        <td class="text-right">{% with c=row.booted_at %}<time class="prov-clock" datetime="{{ c.iso }}" data-prov-time="{{ c.ts }}" data-prov-minutes>{{ c.utc }}</time>{% endwith %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6" class="text-center text-muted" style="padding: 20px;">{% trans "No boots in this range." %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if partial_notes or data_stale or data_old or rows %}
+<div class="panel-footer prov-muted">
+  {% include "admin/provisioning/_notes.html" %}
+  {% if rows %}<i class="fa fa-info-circle" aria-hidden="true"></i> {% trans "“When” is when the boot was first seen, to the step of the range, in your browser's time zone. A dash in Flavor means the instance was deleted since." %}{% endif %}
+</div>
+{% endif %}
+{% endif %}

@@ -1,0 +1,56 @@
+{% load i18n %}
+{% if error_message %}
+{% include "admin/provisioning/_error.html" %}
+{% else %}
+<div class="row prov-cards">
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel prov-card prov-info">
+      <div class="panel-heading">
+        <i class="fa fa-rocket prov-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="prov-value">{{ summary.boots }}</div>
+          <div class="prov-label">{% trans "Instances booted" %}</div>
+          <div class="prov-sub">{% blocktrans with range=range_key %}last {{ range }}{% endblocktrans %} | {% blocktrans count n=summary.hosts_total %}{{ n }} host{% plural %}{{ n }} hosts{% endblocktrans %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel prov-card {% if summary.median is None %}prov-info{% elif summary.median > thresholds.median_seconds_warning %}prov-warn{% else %}prov-ok{% endif %}">
+      <div class="panel-heading">
+        <i class="fa fa-clock-o prov-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="prov-value">{% if summary.median is None %}–{% else %}{{ summary.median|floatformat:1 }} s{% endif %}</div>
+          <div class="prov-label">{% trans "Median boot time" %}</div>
+          <div class="prov-sub">{% if not summary.boots %}{% trans "no boots in this range" %}{% elif summary.many %}{% trans "all boots in range" %}{% else %}{% blocktrans count n=summary.boots %}only {{ n }} boot: indicative{% plural %}only {{ n }} boots: indicative{% endblocktrans %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel prov-card {% if not summary.boots %}prov-info{% elif summary.slow_hosts %}prov-crit{% elif summary.slower_hosts %}prov-warn{% else %}prov-ok{% endif %}">
+      <div class="panel-heading">
+        <i class="fa fa-hourglass-end prov-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="prov-value">{% if summary.many %}{{ summary.p95|floatformat:1 }} s{% elif summary.slowest_seconds is None %}–{% else %}{{ summary.slowest_seconds|floatformat:1 }} s{% endif %}</div>
+          <div class="prov-label">{% if summary.many %}{% trans "95th percentile" %}{% else %}{% trans "Slowest boot" %}{% endif %}</div>
+          <div class="prov-sub">{% if summary.slow_hosts %}{% blocktrans count n=summary.slow_hosts|length %}{{ n }} slow host:{% plural %}{{ n }} slow hosts:{% endblocktrans %} {% for h in summary.slow_hosts|slice:":3" %}{{ h.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if summary.slow_hosts|length > 3 %}, …{% endif %}{% elif summary.slower_hosts %}{% blocktrans count n=summary.slower_hosts %}{{ n }} slower host{% plural %}{{ n }} slower hosts{% endblocktrans %}{% else %}{% trans "no slow hosts" %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-3 col-md-6 col-sm-6">
+    <div class="panel prov-card {% if failed is None %}prov-unknown{% elif failed_level == 'crit' %}prov-crit{% elif failed_level == 'warn' %}prov-warn{% else %}prov-ok{% endif %}">
+      <div class="panel-heading">
+        <i class="fa fa-times-circle prov-icon" aria-hidden="true"></i>
+        <div class="text-right" style="flex: 1;">
+          <div class="prov-value">{% if failed is None %}?{% else %}{{ failed.count }}{% if failed.truncated %}+{% endif %}{% endif %}</div>
+          <div class="prov-label">{% trans "Failed builds" %}</div>
+          <div class="prov-sub">{% if failed is None %}{% if failed_loading %}{% trans "loading…" %}{% else %}{% trans "Compute API unavailable" %}{% endif %}{% elif failed.count %}{% blocktrans with pct=failed_percent|floatformat:"-1" %}{{ pct }}% of create requests{% endblocktrans %}{% else %}{% trans "none" %}{% endif %}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="text-right">{% include "admin/provisioning/_notes.html" %}</div>
+{% endif %}
